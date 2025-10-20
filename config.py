@@ -1,0 +1,23 @@
+import os
+import discord
+from discord import Intents
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+# Intentions
+INTENTS = Intents.default()
+INTENTS.members = True
+INTENTS.voice_states = True
+INTENTS.presences = True
+
+# Config serveurs
+GUILD_ID = 1424369365595459755
+HUB_CHANNEL_ID = 1429891186801381417
+CATEGORY_ID = 1429932863389958158
+NAME_PREFIX = "🎮 "
+
+# Bienvenue
+WELCOME_CHANNEL_ID = 1424372004471046154
+WELCOME_ROLE_ID = None
+SEND_WELCOME_DM = True
+SERVER_RULES_CHANNEL_ID = 1424371734705999993
