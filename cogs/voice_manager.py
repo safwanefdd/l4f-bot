@@ -37,9 +37,16 @@ class VoiceManager(commands.Cog):
             return
 
         # Quitte -> supprime si vide
-        if before.channel and before.channel.id in voice_to_owner:
+        if before.channel:
+            owner_id = voice_to_owner.get(before.channel.id)
+            if owner_id is None:
+                return
+
             if len(before.channel.members) == 0:
                 await before.channel.delete()
+                removed_owner_id = voice_to_owner.pop(before.channel.id, None)
+                if removed_owner_id is not None:
+                    owner_to_voice.pop(removed_owner_id, None)
 
 async def setup(bot):
     await bot.add_cog(VoiceManager(bot))
