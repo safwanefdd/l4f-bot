@@ -46,10 +46,18 @@ THEMES = {
 }
 ACTIVE_THEME = "gamer"
 
-# Barres de progression
-BAR_SIZE = 14
-BAR_FULL = "▰"
-BAR_EMPTY = "▱"
+# ====== PROGRESS BAR STYLE ======
+# "gradient" | "emoji" | "glass"
+BAR_STYLE = "gradient"
+
+BAR_SIZE = 18  # 14–22 marche bien
+# jeu de glyphes pour les styles unicode
+_PARTIALS = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"]
+BORDER_LEFT = "┃"
+BORDER_RIGHT = "┃"
+# palette pour l'emoji style (vert → rouge)
+_EMOJI_FILL = ["🟩", "🟨", "🟧", "🟥"]
+_EMOJI_EMPTY = "▫️"   # vide discret
 
 # =========================
 #         HELPERS
@@ -66,10 +74,43 @@ def fmt_remaining(seconds: int) -> str:
 
 
 def make_bar(pct: float, size: int = BAR_SIZE) -> str:
-    """Barre ▰▱ alignée."""
+    """
+    Trois styles :
+    - gradient : remplissage fin (▉ + demi-segments), encadré par ┃ ┃, rendu monospace entre backticks
+    - emoji    : rampes 🟩🟨🟧🟥 + ▫️ en vide
+    - glass    : ▰▱ avec curseur ◈ qui se déplace (look "verre")
+    """
     pct = max(0.0, min(1.0, pct))
-    filled = int(round(pct * size))
-    return BAR_FULL * filled + BAR_EMPTY * (size - filled)
+
+    if BAR_STYLE == "emoji":
+        filled = int(round(pct * size))
+        idx = min(int(pct * (len(_EMOJI_FILL) - 1)), len(_EMOJI_FILL) - 1)
+        fill_token = _EMOJI_FILL[idx]
+        return fill_token * filled + _EMOJI_EMPTY * (size - filled)
+
+    if BAR_STYLE == "glass":
+        filled = int(pct * size)
+        cursor_pos = min(size - 1, max(0, int(round(pct * (size - 1)))))
+        body = list("▱" * size)
+        for i in range(filled):
+            body[i] = "▰"
+        body[cursor_pos] = "◈"
+        return f"{BORDER_LEFT}{''.join(body)}{BORDER_RIGHT}"
+
+    # style "gradient" par défaut
+    exact = pct * size
+    whole = int(exact)                      # segments pleins
+    remainder = exact - whole               # fraction pour demi-segment
+    partial_idx = min(int(remainder * (len(_PARTIALS))), len(_PARTIALS) - 1)
+
+    bar = "█" * whole
+    if partial_idx > 0 and whole < size:
+        bar += _PARTIALS[partial_idx]
+        whole += 1
+    if whole < size:
+        bar += " " * (size - whole)         # pads vides (monospace)
+
+    return f"{BORDER_LEFT}{bar}{BORDER_RIGHT}"
 
 
 def medal_for(rank: int) -> str:
@@ -557,10 +598,13 @@ class Polls(commands.Cog):
             pct = (c / total) if total > 0 else 0.0
             bar = make_bar(pct)
             pct_txt = f"{int(round(pct * 100)):>3d}%"
+            badge = "🟢" if pct >= 0.66 else ("🟠" if pct >= 0.33 else "⚪")
             prefix = f"{ch.emoji} " if ch.emoji else ""
             emb.add_field(
                 name=f"{prefix}{ch.label}",
-                value=f"`{bar}`  **{c}** vote(s) • `{pct_txt}`",
+                value=(f"{bar}   **{c}** vote(s) • {badge} {pct_txt}"
+                       if BAR_STYLE == "emoji"
+                       else f"`{bar}`   **{c}** vote(s) • {badge} `{pct_txt}`"),
                 inline=False,
             )
 
@@ -601,7 +645,9 @@ class Polls(commands.Cog):
             prefix = f"{ch.emoji} " if ch.emoji else ""
             emb.add_field(
                 name=f"{medal_for(rank)} {prefix}{ch.label}",
-                value=f"`{bar}`  **{c}** vote(s) • `{pct_txt}`",
+                value=(f"{bar}   **{c}** vote(s) • {pct_txt}"
+                       if BAR_STYLE == "emoji"
+                       else f"`{bar}`   **{c}** vote(s) • `{pct_txt}`"),
                 inline=False,
             )
 
