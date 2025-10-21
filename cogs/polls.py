@@ -146,15 +146,15 @@ class PollButton(discord.ui.Button):
             return await interaction.response.send_message("⏰ Le sondage est déjà terminé.", ephemeral=True)
 
         uid = interaction.user.id
+        changed = False
         if state.allow_multi:
             cur = state.votes_multi.get(uid, set())
             if self.index in cur:
-                cur.remove(self.index)       # toggle off
-                changed = True
+                cur.remove(self.index)   # toggle off
             else:
-                cur.add(self.index)          # toggle on
-                changed = True
+                cur.add(self.index)      # toggle on
             state.votes_multi[uid] = cur
+            changed = True
         else:
             prev = state.votes_single.get(uid)
             state.votes_single[uid] = self.index
@@ -178,10 +178,14 @@ class PollButton(discord.ui.Button):
                 sel = sorted(state.votes_multi[uid])
                 labels = [state.choices[i].label for i in sel]
                 await interaction.response.send_message(
-                    f"✅ Sélection mise à jour : {', '.join(labels) if labels else '—'}", ephemeral=True
+                    f"✅ Sélection mise à jour : {', '.join(labels) if labels else '—'}",
+                    ephemeral=True,
                 )
             else:
-                await interaction.response.send_message(f"✅ Vote enregistré pour **{ch.label}**.", ephemeral=True)
+                await interaction.response.send_message(
+                    f"✅ Vote enregistré pour **{ch.label}**.",
+                    ephemeral=True,
+                )
         else:
             await interaction.response.send_message("ℹ️ Pas de changement.", ephemeral=True)
 
@@ -203,69 +207,97 @@ class PollView(discord.ui.View):
                 await self.cog.finalize_poll(msg, self.state)
 
 # --------------------------------------------------------------------------- #
-# Wizard (vue éphémère) : salon + mode + nb choix
+# Wizard : Selects éphémères (salon, mode, nb choix) — sans ChannelSelect
 # --------------------------------------------------------------------------- #
 
 
+class ChannelPicker(discord.ui.Select):
+    """Select simple qui liste jusqu'à 25 salons texte du serveur."""
+
+    def __init__(self, wizard: "PollWizard", guild: discord.Guild, current_channel: Optional[discord.TextChannel]):
+        options: List[discord.SelectOption] = []
+        # on trie par position dans le serveur
+        texts = sorted([c for c in guild.text_channels],
+                       key=lambda c: (c.category_id or 0, c.position))
+        for ch in texts[:25]:
+            label = f"#{ch.name}"
+            desc = ch.category.name if ch.category else "Sans catégorie"
+            default = current_channel and (ch.id == current_channel.id)
+            options.append(discord.SelectOption(label=label, value=str(
+                ch.id), description=desc, default=default))
+        super().__init__(placeholder="Choisir le salon (par défaut : ici)",
+                         min_values=1, max_values=1, options=options)
+        self.wizard = wizard
+
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            self.wizard.target_channel = int(self.values[0])
+        except Exception:
+            self.wizard.target_channel = None
+        await interaction.response.defer()
+
+
 class PollWizard(discord.ui.View):
-    def __init__(self, cog: "Polls"):
+    def __init__(self, cog: "Polls", guild: discord.Guild, current_channel: Optional[discord.TextChannel]):
         super().__init__(timeout=300)
         self.cog = cog
-        self.target_channel: Optional[int] = None
+        self.target_channel: Optional[int] = current_channel.id if current_channel else None
         self.allow_multi: bool = False
         self.num_choices: int = 2
 
-    @discord.ui.channel_select(
-        cls=discord.ui.ChannelSelect,
-        channel_types=[discord.ChannelType.text],
-        placeholder="Choisir le salon (par défaut : ici)",
-    )
-    async def pick_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
-        channel = select.values[0] if select.values else None
-        self.target_channel = channel.id if isinstance(
-            channel, discord.TextChannel) else None
+        # Sélecteur de salon (custom)
+        self.add_item(ChannelPicker(self, guild, current_channel))
+
+        # Mode de vote
+        self.mode_select = discord.ui.Select(
+            placeholder="Mode de vote",
+            min_values=1, max_values=1,
+            options=[
+                discord.SelectOption(label="Choix unique", value="single",
+                                     emoji="1️⃣", description="1 vote par utilisateur"),
+                discord.SelectOption(label="Choix multiples", value="multi",
+                                     emoji="✅", description="Plusieurs votes par utilisateur"),
+            ],
+        )
+        self.mode_select.callback = self._on_pick_mode  # type: ignore
+        self.add_item(self.mode_select)
+
+        # Nombre de choix
+        self.count_select = discord.ui.Select(
+            placeholder="Nombre de choix (2–10)",
+            min_values=1, max_values=1,
+            options=[discord.SelectOption(label=str(i), value=str(
+                i)) for i in range(2, MAX_CHOICES + 1)],
+        )
+        self.count_select.callback = self._on_pick_count  # type: ignore
+        self.add_item(self.count_select)
+
+        # Continuer
+        self.continue_btn = discord.ui.Button(
+            label="Continuer ➡️", style=discord.ButtonStyle.success)
+        self.continue_btn.callback = self._on_continue  # type: ignore
+        self.add_item(self.continue_btn)
+
+    async def _on_pick_mode(self, interaction: discord.Interaction):
+        self.allow_multi = (self.mode_select.values[0] == "multi")
         await interaction.response.defer()
 
-    @discord.ui.select(
-        placeholder="Mode de vote",
-        min_values=1, max_values=1,
-        options=[
-            discord.SelectOption(label="Choix unique", value="single",
-                                 emoji="1️⃣", description="1 vote par utilisateur"),
-            discord.SelectOption(label="Choix multiples", value="multi",
-                                 emoji="✅", description="Plusieurs votes par utilisateur"),
-        ]
-    )
-    async def pick_mode(self, interaction: discord.Interaction, select: discord.ui.Select):
-        self.allow_multi = (select.values[0] == "multi")
+    async def _on_pick_count(self, interaction: discord.Interaction):
+        self.num_choices = int(self.count_select.values[0])
         await interaction.response.defer()
 
-    @discord.ui.select(
-        placeholder="Nombre de choix (2–10)",
-        min_values=1, max_values=1,
-        options=[discord.SelectOption(label=str(i), value=str(i))
-                 for i in range(2, MAX_CHOICES + 1)]
-    )
-    async def pick_count(self, interaction: discord.Interaction, select: discord.ui.Select):
-        self.num_choices = int(select.values[0])
-        await interaction.response.defer()
-
-    @discord.ui.button(label="Continuer ➡️", style=discord.ButtonStyle.success)
-    async def continue_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # fallback : si pas de salon choisi -> salon courant
+    async def _on_continue(self, interaction: discord.Interaction):
         channel_id = self.target_channel or (
             interaction.channel.id if interaction.channel else None)
         if channel_id is None:
             return await interaction.response.send_message("⚠️ Impossible de déterminer le salon.", ephemeral=True)
-
-        # ouvre le 1er modal : question + durée + choix 1..5
         await interaction.response.send_modal(
             ChoiceModalPart1(self.cog, channel_id,
                              self.allow_multi, self.num_choices)
         )
 
 # --------------------------------------------------------------------------- #
-# Modals pour saisir la question/durée + choix (5 inputs max par modal)
+# Modals pour question/durée + choix (5 inputs max par modal)
 # --------------------------------------------------------------------------- #
 
 
@@ -281,7 +313,6 @@ class ChoiceModalPart1(discord.ui.Modal, title="Créer un sondage (1/2)"):
         self.channel_id = channel_id
         self.allow_multi = allow_multi
         self.total_choices = total_choices
-        # Ajoute 1..min(5, total) inputs pour les choix (emoji + label possible dans le même input)
         self.choice_inputs: List[discord.ui.TextInput] = []
         first_batch = min(5, total_choices)
         for i in range(first_batch):
@@ -289,13 +320,12 @@ class ChoiceModalPart1(discord.ui.Modal, title="Créer un sondage (1/2)"):
                 label=f"Choix {i+1}",
                 placeholder="Ex : 🥐 Croissant",
                 required=True,
-                max_length=MAX_CHOICE_LENGTH + 10,  # marge emoji
+                max_length=MAX_CHOICE_LENGTH + 10,
             )
             self.add_item(ti)
             self.choice_inputs.append(ti)
 
     async def on_submit(self, interaction: discord.Interaction):
-        # validations basiques
         q = self.question.value.strip()
         if not q:
             return await interaction.response.send_message("⚠️ La question ne peut pas être vide.", ephemeral=True)
@@ -310,19 +340,18 @@ class ChoiceModalPart1(discord.ui.Modal, title="Créer un sondage (1/2)"):
             if d_minutes > MAX_TIMEOUT_MINUTES:
                 return await interaction.response.send_message("⚠️ Durée max : 7 jours (10080).", ephemeral=True)
 
-        # stocke dans state temporaire de l'interaction (custom_id ne persiste pas entre modals -> on passe par message éphémère + followup)
-        # On garde ceci dans l'objet même et on chaine vers Part2 si besoin :
-        collected_lines = [ci.value for ci in self.choice_inputs]
-        remaining = self.total_choices - len(collected_lines)
+        collected = [ci.value for ci in self.choice_inputs]
+        remaining = self.total_choices - len(collected)
 
         if remaining > 0:
             await interaction.response.send_modal(
-                ChoiceModalPart2(self.cog, self.channel_id, self.allow_multi,
-                                 q, d_minutes, collected_lines, remaining)
+                ChoiceModalPart2(
+                    self.cog, self.channel_id, self.allow_multi, q, d_minutes, collected, remaining)
             )
         else:
-            # création directe
-            await self.cog.create_poll_from_inputs(interaction, self.channel_id, self.allow_multi, q, d_minutes, collected_lines)
+            await self.cog.create_poll_from_inputs(
+                interaction, self.channel_id, self.allow_multi, q, d_minutes, collected
+            )
 
 
 class ChoiceModalPart2(discord.ui.Modal, title="Créer un sondage (2/2)"):
@@ -364,8 +393,6 @@ class Polls(commands.Cog):
         self.bot = bot
         self._sessions: Dict[int, PollState] = {}
 
-    # ----------- Création depuis les inputs (lignes "emoji + label") -------- #
-
     async def create_poll_from_inputs(
         self,
         interaction: discord.Interaction,
@@ -375,7 +402,6 @@ class Polls(commands.Cog):
         d_minutes: Optional[int],
         lines: List[str],
     ):
-        # Validations & parsing
         if len(lines) < 2:
             return await interaction.response.send_message("⚠️ Mets au moins deux choix.", ephemeral=True)
         if len(lines) > MAX_CHOICES:
@@ -398,12 +424,10 @@ class Polls(commands.Cog):
             seen.add(key)
             choices.append(Choice(label=label, emoji=coerce_emoji(emoji_raw)))
 
-        # Salon cible
         channel = self.bot.get_channel(channel_id)
         if not isinstance(channel, (discord.TextChannel, discord.Thread, discord.VoiceChannel)):
             return await interaction.response.send_message("⚠️ Salon invalide.", ephemeral=True)
 
-        # Permissions minimales
         if isinstance(channel, discord.abc.GuildChannel):
             me = channel.guild.me
             if me is not None:
@@ -426,7 +450,6 @@ class Polls(commands.Cog):
         embed = self.build_running_embed(state, interaction.user)
         view = PollView(self, state, timeout=None)
 
-        # On répond d'abord à la soumission du modal (évite “Interaction failed”)
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
 
@@ -455,7 +478,7 @@ class Polls(commands.Cog):
         if end_time:
             asyncio.create_task(self.run_countdown_and_close(msg, state))
 
-    # -------------------------------- Embeds ------------------------------- #
+    # ------------------------------ Embeds ------------------------------- #
 
     def build_running_embed(self, state: PollState, author: discord.abc.User) -> discord.Embed:
         counts = state.counts
@@ -510,7 +533,7 @@ class Polls(commands.Cog):
         emb.set_footer(text=f"{total} vote(s) • Sondage terminé")
         return emb
 
-    # --------------------------- Countdown & clôture ------------------------ #
+    # ---------------------- Countdown & clôture -------------------------- #
 
     async def run_countdown_and_close(self, message: discord.Message, state: PollState):
         if not state.end_time:
@@ -538,13 +561,20 @@ class Polls(commands.Cog):
         with contextlib.suppress(discord.HTTPException):
             await message.edit(content="**Sondage terminé** ⏰", embed=closed, view=view)
 
-    # ------------------------------ Commande ------------------------------- #
+    # ------------------------------ Commande ----------------------------- #
 
     @app_commands.command(name="sondage", description="Assistant de création (salon, mode, nombre de choix)")
     async def sondage(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message(
+                "⚠️ Cette commande doit être utilisée dans un serveur.",
+                ephemeral=True,
+            )
+        current_channel = interaction.channel if isinstance(
+            interaction.channel, discord.TextChannel) else None
         await interaction.response.send_message(
             "Configure ton sondage ci-dessous 👇",
-            view=PollWizard(self),
+            view=PollWizard(self, interaction.guild, current_channel),
             ephemeral=True,
         )
 
