@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -17,6 +19,7 @@ NUMBER_EMOJIS = (
 
 MAX_QUESTION_LENGTH = 256
 MAX_CHOICE_LENGTH = 100
+MAX_TIMEOUT_MINUTES = 7 * 24 * 60  # une semaine
 
 
 class Polls(commands.Cog):
@@ -38,6 +41,8 @@ class Polls(commands.Cog):
         choix8="Huitième choix (optionnel)",
         choix9="Neuvième choix (optionnel)",
         choix10="Dixième choix (optionnel)",
+        timeout="Durée du sondage en minutes (optionnel)",
+        salon="Salon où publier le sondage (par défaut : ici)",
     )
     async def sondage(
         self,
@@ -53,6 +58,8 @@ class Polls(commands.Cog):
         choix8: str | None = None,
         choix9: str | None = None,
         choix10: str | None = None,
+        timeout: int | None = None,
+        salon: discord.TextChannel | None = None,
     ) -> None:
         # validations avant d'accuser réception
         question = question.strip()
@@ -98,34 +105,110 @@ class Polls(commands.Cog):
             )
             return
 
-        if interaction.channel is None:
+        if timeout is not None:
+            if timeout <= 0:
+                await interaction.response.send_message(
+                    "⚠️ La durée doit être strictement positive.", ephemeral=True
+                )
+                return
+            if timeout > MAX_TIMEOUT_MINUTES:
+                await interaction.response.send_message(
+                    "⚠️ La durée maximale d'un sondage est de 7 jours (10080 minutes).",
+                    ephemeral=True,
+                )
+                return
+
+        target_channel: discord.abc.MessageableChannel | None
+        if salon is not None:
+            if interaction.guild is None:
+                await interaction.response.send_message(
+                    "⚠️ Impossible de cibler un salon depuis un message privé.",
+                    ephemeral=True,
+                )
+                return
+            if salon.guild != interaction.guild:
+                await interaction.response.send_message(
+                    "⚠️ Le salon doit appartenir au même serveur que la commande.",
+                    ephemeral=True,
+                )
+                return
+            target_channel = salon
+        else:
+            target_channel = interaction.channel
+
+        if target_channel is None:
             await interaction.response.send_message(
-                "⚠️ Impossible de trouver le salon pour publier le sondage.", ephemeral=True
+                "⚠️ Impossible de déterminer le salon de publication.", ephemeral=True
             )
             return
 
-        await interaction.response.defer(ephemeral=True)
+        # Vérification des permissions du bot dans le salon cible
+        if isinstance(target_channel, discord.abc.GuildChannel):
+            me = target_channel.guild.me
+            if me is not None:
+                permissions = target_channel.permissions_for(me)
+                if not permissions.send_messages:
+                    await interaction.response.send_message(
+                        "⚠️ Je n'ai pas la permission d'envoyer un message dans ce salon.",
+                        ephemeral=True,
+                    )
+                    return
+                if not permissions.add_reactions:
+                    await interaction.response.send_message(
+                        "⚠️ Je n'ai pas la permission d'ajouter des réactions dans ce salon.",
+                        ephemeral=True,
+                    )
+                    return
+                if not permissions.embed_links:
+                    await interaction.response.send_message(
+                        "⚠️ Je dois pouvoir intégrer des liens pour publier le sondage.",
+                        ephemeral=True,
+                    )
+                    return
+
+        end_time = None
+        if timeout is not None:
+            end_time = discord.utils.utcnow() + timedelta(minutes=timeout)
 
         embed = discord.Embed(title=question, color=discord.Color.blurple())
         description_lines = []
         for emoji, choice_text in zip(NUMBER_EMOJIS, cleaned_choices):
             description_lines.append(f"{emoji} **{choice_text}**")
         embed.description = "\n".join(description_lines)
-        embed.set_footer(text=f"Sondage créé par {interaction.user.display_name}")
+        footer_parts = [f"Sondage créé par {interaction.user.display_name}"]
+        if end_time is not None:
+            formatted_end = discord.utils.format_dt(end_time, style="f")
+            relative_end = discord.utils.format_dt(end_time, style="R")
+            footer_parts.append(f"Fin {formatted_end} ({relative_end})")
+            embed.timestamp = end_time
+        embed.set_footer(text=" • ".join(footer_parts))
 
         try:
-            poll_message = await interaction.channel.send(embed=embed)
+            if target_channel == interaction.channel and not interaction.response.is_done():
+                await interaction.response.send_message(embed=embed)
+                poll_message = await interaction.original_response()
+            else:
+                if not interaction.response.is_done():
+                    await interaction.response.defer(ephemeral=True)
+                poll_message = await target_channel.send(embed=embed)
             for emoji, _ in zip(NUMBER_EMOJIS, cleaned_choices):
                 await poll_message.add_reaction(emoji)
         except Exception as exc:  # pragma: no cover - dépend de l'API Discord
-            await interaction.followup.send(
-                f"⚠️ Impossible de publier le sondage : {exc}", ephemeral=True
-            )
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    f"⚠️ Impossible de publier le sondage : {exc}", ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    f"⚠️ Impossible de publier le sondage : {exc}", ephemeral=True
+                )
             return
 
-        await interaction.followup.send(
-            f"✅ Sondage publié avec succès : {poll_message.jump_url}", ephemeral=True
-        )
+        if target_channel != interaction.channel:
+            await interaction.followup.send(
+                f"✅ Sondage publié dans {target_channel.mention} : {poll_message.jump_url}",
+                ephemeral=True,
+            )
 
 
 async def setup(bot: commands.Bot) -> None:
