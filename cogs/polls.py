@@ -11,18 +11,53 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+# =========================
+#           CONFIG
+# =========================
+
 MAX_CHOICES = 10
 MAX_QUESTION_LENGTH = 256
 MAX_CHOICE_LENGTH = 100
 MAX_TIMEOUT_MINUTES = 7 * 24 * 60  # 1 semaine
-BAR_SIZE = 20  # largeur des barres
 
-# --------------------------------------------------------------------------- #
-# Helpers
-# --------------------------------------------------------------------------- #
+# ====== THEME / STYLE ======
+THEMES = {
+    "gamer": {
+        "color_running": discord.Color.from_rgb(88, 101, 242),   # blurple
+        "color_closed": discord.Color.from_rgb(32, 34, 37),      # dark gray
+        "title_running": "📊 Nouveau sondage",
+        "title_closed":  "🏁 Sondage terminé",
+        "banner_url": None,  # mets ici une URL d'image si tu veux une bannière
+    },
+    "pastel": {
+        "color_running": discord.Color.from_rgb(255, 179, 186),
+        "color_closed": discord.Color.from_rgb(255, 223, 186),
+        "title_running": "🧁 Nouveau sondage",
+        "title_closed":  "🎀 Sondage terminé",
+        "banner_url": None,
+    },
+    "minimal": {
+        "color_running": discord.Color.light_grey(),
+        "color_closed": discord.Color.dark_grey(),
+        "title_running": "Sondage",
+        "title_closed":  "Sondage terminé",
+        "banner_url": None,
+    },
+}
+ACTIVE_THEME = "gamer"
+
+# Barres de progression
+BAR_SIZE = 14
+BAR_FULL = "▰"
+BAR_EMPTY = "▱"
+
+# =========================
+#         HELPERS
+# =========================
 
 
 def fmt_remaining(seconds: int) -> str:
+    """HH:MM:SS (ou MM:SS si <1h)."""
     if seconds < 0:
         seconds = 0
     h, r = divmod(seconds, 3600)
@@ -31,18 +66,25 @@ def fmt_remaining(seconds: int) -> str:
 
 
 def make_bar(pct: float, size: int = BAR_SIZE) -> str:
+    """Barre ▰▱ alignée."""
     pct = max(0.0, min(1.0, pct))
     filled = int(round(pct * size))
-    return "█" * filled + "░" * (size - filled)
+    return BAR_FULL * filled + BAR_EMPTY * (size - filled)
+
+
+def medal_for(rank: int) -> str:
+    return {1: "🥇", 2: "🥈", 3: "🥉"}.get(rank, "•")
 
 
 def looks_like_unicode_emoji(token: str) -> bool:
+    """Heuristique simple pour différencier un vrai emoji d’un texte."""
     if not token or token.isalnum():
         return False
     return any(unicodedata.category(ch) in ("So", "Sk") for ch in token)
 
 
 def coerce_emoji(val: Union[str, discord.PartialEmoji, None]) -> Optional[Union[str, discord.PartialEmoji]]:
+    """Retourne un émoji valide pour Discord, sinon None."""
     if val is None:
         return None
     if isinstance(val, discord.PartialEmoji):
@@ -59,6 +101,10 @@ def coerce_emoji(val: Union[str, discord.PartialEmoji, None]) -> Optional[Union[
 
 
 def parse_choice_line(line: str) -> Tuple[Optional[Union[str, discord.PartialEmoji]], str]:
+    """
+    Parse 'emoji optionnel + espace + libellé'.
+    Supporte unicode (🥐) et custom (<:name:id>).
+    """
     s = line.strip()
     if not s:
         return None, ""
@@ -77,9 +123,9 @@ def parse_choice_line(line: str) -> Tuple[Optional[Union[str, discord.PartialEmo
             return first, rest.strip()
     return None, s
 
-# --------------------------------------------------------------------------- #
-# Modèle
-# --------------------------------------------------------------------------- #
+# =========================
+#          MODEL
+# =========================
 
 
 @dataclass
@@ -119,18 +165,22 @@ class PollState:
     def total(self) -> int:
         return sum(self.counts)
 
-# --------------------------------------------------------------------------- #
-# Boutons de vote
-# --------------------------------------------------------------------------- #
+# =========================
+#        VOTE UI
+# =========================
 
 
 class PollButton(discord.ui.Button):
     def __init__(self, index: int, choice: Choice):
         valid_emoji = coerce_emoji(choice.emoji)
-        # Discord exige AU MOINS un label ou un emoji :
+        # Discord exige au moins label ou emoji
         label_text = "\u200b" if valid_emoji else (choice.label or "Choix")
+        styles = (discord.ButtonStyle.primary,
+                  discord.ButtonStyle.secondary, discord.ButtonStyle.success)
+        style = styles[index % len(styles)]
+
         super().__init__(
-            style=discord.ButtonStyle.primary,
+            style=style,
             label=label_text,
             emoji=valid_emoji,
             row=min(index // 5, 4),
@@ -171,7 +221,7 @@ class PollButton(discord.ui.Button):
             with contextlib.suppress(discord.HTTPException):
                 await msg.edit(embed=embed)
 
-        # feedback
+        # Feedback
         ch = state.choices[self.index]
         if changed:
             if state.allow_multi:
@@ -206,9 +256,9 @@ class PollView(discord.ui.View):
                 msg = await channel.fetch_message(self.state.message_id)
                 await self.cog.finalize_poll(msg, self.state)
 
-# --------------------------------------------------------------------------- #
-# Wizard : Selects éphémères (salon, mode, nb choix) — sans ChannelSelect
-# --------------------------------------------------------------------------- #
+# =========================
+#        WIZARD UI
+# =========================
 
 
 class ChannelPicker(discord.ui.Select):
@@ -216,13 +266,12 @@ class ChannelPicker(discord.ui.Select):
 
     def __init__(self, wizard: "PollWizard", guild: discord.Guild, current_channel: Optional[discord.TextChannel]):
         options: List[discord.SelectOption] = []
-        # on trie par position dans le serveur
         texts = sorted([c for c in guild.text_channels],
                        key=lambda c: (c.category_id or 0, c.position))
         for ch in texts[:25]:
             label = f"#{ch.name}"
             desc = ch.category.name if ch.category else "Sans catégorie"
-            default = current_channel and (ch.id == current_channel.id)
+            default = bool(current_channel and (ch.id == current_channel.id))
             options.append(discord.SelectOption(label=label, value=str(
                 ch.id), description=desc, default=default))
         super().__init__(placeholder="Choisir le salon (par défaut : ici)",
@@ -245,7 +294,7 @@ class PollWizard(discord.ui.View):
         self.allow_multi: bool = False
         self.num_choices: int = 2
 
-        # Sélecteur de salon (custom)
+        # Sélecteur de salon
         self.add_item(ChannelPicker(self, guild, current_channel))
 
         # Mode de vote
@@ -296,9 +345,9 @@ class PollWizard(discord.ui.View):
                              self.allow_multi, self.num_choices)
         )
 
-# --------------------------------------------------------------------------- #
-# Modals pour question/durée + choix (5 inputs max par modal)
-# --------------------------------------------------------------------------- #
+# =========================
+#          MODALS
+# =========================
 
 
 class ChoiceModalPart1(discord.ui.Modal, title="Créer un sondage (1/2)"):
@@ -320,7 +369,7 @@ class ChoiceModalPart1(discord.ui.Modal, title="Créer un sondage (1/2)"):
                 label=f"Choix {i+1}",
                 placeholder="Ex : 🥐 Croissant",
                 required=True,
-                max_length=MAX_CHOICE_LENGTH + 10,
+                max_length=MAX_CHOICE_LENGTH + 10,  # marge emoji
             )
             self.add_item(ti)
             self.choice_inputs.append(ti)
@@ -331,10 +380,11 @@ class ChoiceModalPart1(discord.ui.Modal, title="Créer un sondage (1/2)"):
             return await interaction.response.send_message("⚠️ La question ne peut pas être vide.", ephemeral=True)
 
         d_minutes: Optional[int] = None
-        if self.duree.value.strip():
-            if not self.duree.value.strip().isdigit():
+        dv = self.duree.value.strip()
+        if dv:
+            if not dv.isdigit():
                 return await interaction.response.send_message("⚠️ La durée doit être un nombre (minutes).", ephemeral=True)
-            d_minutes = int(self.duree.value.strip())
+            d_minutes = int(dv)
             if d_minutes <= 0:
                 return await interaction.response.send_message("⚠️ La durée doit être positive.", ephemeral=True)
             if d_minutes > MAX_TIMEOUT_MINUTES:
@@ -381,17 +431,19 @@ class ChoiceModalPart2(discord.ui.Modal, title="Créer un sondage (2/2)"):
             interaction, self.channel_id, self.allow_multi, self.question, self.d_minutes, lines
         )
 
-# --------------------------------------------------------------------------- #
-# Cog principal
-# --------------------------------------------------------------------------- #
+# =========================
+#            COG
+# =========================
 
 
 class Polls(commands.Cog):
-    """Sondages : choix du salon + mode (unique/multiples) + inputs séparés + barres + timer."""
+    """Sondages : choix du salon + mode (unique/multiples) + inputs séparés + barres + timer + thème."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._sessions: Dict[int, PollState] = {}
+
+    # ------- Création depuis les inputs (emoji optionnel + label) ------- #
 
     async def create_poll_from_inputs(
         self,
@@ -481,26 +533,36 @@ class Polls(commands.Cog):
     # ------------------------------ Embeds ------------------------------- #
 
     def build_running_embed(self, state: PollState, author: discord.abc.User) -> discord.Embed:
+        theme = THEMES[ACTIVE_THEME]
         counts = state.counts
         total = sum(counts)
+
         emb = discord.Embed(
-            title="📊 Nouveau sondage",
-            description=f"{state.question}\n\n"
-            f"{'Sélection multiple autorisée.' if state.allow_multi else 'Un seul choix par personne.'}",
-            color=discord.Color.blurple(),
+            title=theme["title_running"],
+            description=(
+                f"**{state.question}**\n\n"
+                f"{'Sélection multiple autorisée.' if state.allow_multi else 'Un seul choix par personne.'}"
+            ),
+            color=theme["color_running"],
         )
         emb.set_author(
             name=getattr(author, "display_name", "Auteur"),
             icon_url=getattr(
                 getattr(author, "display_avatar", None), "url", None),
         )
+        if theme["banner_url"]:
+            emb.set_image(url=theme["banner_url"])
+
         for ch, c in zip(state.choices, counts):
             pct = (c / total) if total > 0 else 0.0
             bar = make_bar(pct)
-            pct_txt = f"{int(round(pct * 100))}%"
+            pct_txt = f"{int(round(pct * 100)):>3d}%"
             prefix = f"{ch.emoji} " if ch.emoji else ""
-            emb.add_field(name=f"{prefix}{ch.label}",
-                          value=f"{bar}  **{c}** vote(s) • {pct_txt}", inline=False)
+            emb.add_field(
+                name=f"{prefix}{ch.label}",
+                value=f"`{bar}`  **{c}** vote(s) • `{pct_txt}`",
+                inline=False,
+            )
 
         if state.end_time:
             remaining = int(
@@ -511,25 +573,38 @@ class Polls(commands.Cog):
         return emb
 
     def build_closed_embed(self, state: PollState, author: discord.abc.User) -> discord.Embed:
+        theme = THEMES[ACTIVE_THEME]
         counts = state.counts
+        order = sorted(range(len(counts)),
+                       key=lambda i: counts[i], reverse=True)
         total = sum(counts)
+
         emb = discord.Embed(
-            title="📊 Sondage terminé",
+            title=theme["title_closed"],
             description="Voici les résultats :",
-            color=discord.Color.dark_gray(),
+            color=theme["color_closed"],
         )
         emb.set_author(
             name=getattr(author, "display_name", "Auteur"),
             icon_url=getattr(
                 getattr(author, "display_avatar", None), "url", None),
         )
-        for ch, c in zip(state.choices, counts):
+        if theme["banner_url"]:
+            emb.set_image(url=theme["banner_url"])
+
+        for rank, i in enumerate(order, start=1):
+            ch = state.choices[i]
+            c = counts[i]
             pct = (c / total) if total > 0 else 0.0
             bar = make_bar(pct)
-            pct_txt = f"{int(round(pct * 100))}%"
+            pct_txt = f"{int(round(pct * 100)):>3d}%"
             prefix = f"{ch.emoji} " if ch.emoji else ""
-            emb.add_field(name=f"{prefix}{ch.label}",
-                          value=f"{bar}  **{c}** vote(s) • {pct_txt}", inline=False)
+            emb.add_field(
+                name=f"{medal_for(rank)} {prefix}{ch.label}",
+                value=f"`{bar}`  **{c}** vote(s) • `{pct_txt}`",
+                inline=False,
+            )
+
         emb.set_footer(text=f"{total} vote(s) • Sondage terminé")
         return emb
 
