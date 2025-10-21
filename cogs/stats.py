@@ -2,6 +2,7 @@
 import os
 import sqlite3
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Optional, Dict
 
@@ -11,8 +12,10 @@ from discord import app_commands, ActivityType
 
 DB_PATH = os.path.join("data", "stats.db")
 
-# En mémoire: début de session par utilisateur -> nom du jeu
-active_sessions: Dict[int, tuple[str, datetime]] = {}  # user_id -> (game, started_at)
+logger = logging.getLogger(__name__)
+
+# En mémoire: début de session par (guild_id, user_id) -> nom du jeu
+active_sessions: Dict[int, Dict[int, tuple[str, datetime]]] = {}
 
 
 def ensure_db():
@@ -104,15 +107,35 @@ class Stats(commands.Cog):
             return
 
         # cas 2: fermeture de l'ancienne session
-        if user_id in active_sessions:
-            old_game, started_at = active_sessions.pop(user_id)
+        guild_sessions = active_sessions.get(guild_id)
+        if guild_sessions and user_id in guild_sessions:
+            old_game, started_at = guild_sessions.pop(user_id)
             delta = int((now - started_at).total_seconds())
             if delta > 0:
                 add_seconds(guild_id, user_id, old_game, delta)
+            logger.debug(
+                "Session fermée", extra={
+                    "guild_id": guild_id,
+                    "user_id": user_id,
+                    "game": old_game,
+                    "duration": delta,
+                }
+            )
+            if not guild_sessions:
+                active_sessions.pop(guild_id, None)
 
         # cas 3: ouverture de la nouvelle session
         if after_game:
-            active_sessions[user_id] = (after_game, now)
+            guild_sessions = active_sessions.setdefault(guild_id, {})
+            guild_sessions[user_id] = (after_game, now)
+            logger.debug(
+                "Session ouverte", extra={
+                    "guild_id": guild_id,
+                    "user_id": user_id,
+                    "game": after_game,
+                    "started_at": now.isoformat(),
+                }
+            )
 
     # --- Commandes slash ---
     @app_commands.command(name="top-jeux", description="Classement des jeux les plus joués du serveur")
@@ -161,8 +184,10 @@ class Stats(commands.Cog):
 
         # additionne la session en cours (si jeu actif)
         add_line = ""
-        if interaction.user.id in active_sessions:
-            g, started = active_sessions[interaction.user.id]
+        guild_sessions = active_sessions.get(interaction.guild_id, {})
+        session = guild_sessions.get(interaction.user.id)
+        if session:
+            g, started = session
             extra = int((datetime.now(timezone.utc) - started).total_seconds())
             if extra > 5:
                 add_line = f"\n*(en cours)* **{g}** +{fmt_dur(extra)}"
@@ -223,9 +248,14 @@ class Stats(commands.Cog):
             con.commit()
 
         # on vide les sessions en cours des membres de ce serveur
-        to_del = [uid for uid, (g, _) in active_sessions.items() if interaction.guild.get_member(uid)]
-        for uid in to_del:
-            active_sessions.pop(uid, None)
+        guild_sessions = active_sessions.pop(interaction.guild_id, None)
+        if guild_sessions:
+            logger.debug(
+                "Sessions purgées", extra={
+                    "guild_id": interaction.guild_id,
+                    "count": len(guild_sessions),
+                }
+            )
 
         await interaction.response.send_message("🗑️ Stats réinitialisées pour ce serveur.", ephemeral=True)
 
