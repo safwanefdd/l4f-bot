@@ -32,7 +32,7 @@ class Polls(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="sondage", description="Créer un sondage clair avec réactions")
-    @app_commands.rename(set_timeout="setTimeOut")
+    @app_commands.rename(set_timeout="duree")
     @app_commands.describe(
         question="Intitulé du sondage",
         choix1="Premier choix (obligatoire)",
