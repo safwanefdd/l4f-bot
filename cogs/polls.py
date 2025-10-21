@@ -14,16 +14,15 @@ from discord.ext import commands
 MAX_CHOICES = 10
 MAX_QUESTION_LENGTH = 256
 MAX_CHOICE_LENGTH = 100
-MAX_TIMEOUT_MINUTES = 7 * 24 * 60  # une semaine
-BAR_SIZE = 20  # largeur des barres de progression
+MAX_TIMEOUT_MINUTES = 7 * 24 * 60  # 1 semaine
+BAR_SIZE = 20  # largeur des barres
 
 # --------------------------------------------------------------------------- #
-# Helpers d'affichage
+# Helpers
 # --------------------------------------------------------------------------- #
 
 
 def fmt_remaining(seconds: int) -> str:
-    """HH:MM:SS (ou MM:SS si < 1h)."""
     if seconds < 0:
         seconds = 0
     h, r = divmod(seconds, 3600)
@@ -32,22 +31,18 @@ def fmt_remaining(seconds: int) -> str:
 
 
 def make_bar(pct: float, size: int = BAR_SIZE) -> str:
-    """Barre de progression textuelle."""
     pct = max(0.0, min(1.0, pct))
     filled = int(round(pct * size))
     return "█" * filled + "░" * (size - filled)
 
 
 def looks_like_unicode_emoji(token: str) -> bool:
-    """Heuristique simple pour accepter les vrais émojis Unicode et éviter le texte/signes."""
     if not token or token.isalnum():
         return False
-    # On considère émoji si au moins un caractère a une catégorie 'So'/'Sk' (Symbol/Other/Modifier)
     return any(unicodedata.category(ch) in ("So", "Sk") for ch in token)
 
 
 def coerce_emoji(val: Union[str, discord.PartialEmoji, None]) -> Optional[Union[str, discord.PartialEmoji]]:
-    """Retourne un émoji valide pour Discord, sinon None."""
     if val is None:
         return None
     if isinstance(val, discord.PartialEmoji):
@@ -55,31 +50,18 @@ def coerce_emoji(val: Union[str, discord.PartialEmoji, None]) -> Optional[Union[
     s = str(val).strip()
     if not s:
         return None
-    # custom <:name:id>
     if s.startswith("<") and s.endswith(">"):
         try:
-            pe = discord.PartialEmoji.from_str(s)
-            return pe
+            return discord.PartialEmoji.from_str(s)
         except Exception:
             return None
-    # unicode
     return s if looks_like_unicode_emoji(s) else None
-
-# --------------------------------------------------------------------------- #
-# Parsing des lignes de choix
-# --------------------------------------------------------------------------- #
 
 
 def parse_choice_line(line: str) -> Tuple[Optional[Union[str, discord.PartialEmoji]], str]:
-    """
-    Parse une ligne 'emoji optionnel + espace + libellé'.
-    - Supporte les émojis Unicode (🥐) et custom (<:name:id>).
-    - Retourne (emoji|None, label).
-    """
     s = line.strip()
     if not s:
         return None, ""
-    # émoji custom ?
     if s.startswith("<") and ">" in s:
         maybe = s.split(">", 1)[0] + ">"
         try:
@@ -88,13 +70,11 @@ def parse_choice_line(line: str) -> Tuple[Optional[Union[str, discord.PartialEmo
             return pe, label
         except Exception:
             pass
-    # Unicode au début (token avant le 1er espace)
     parts = s.split(" ", 1)
     if len(parts) == 2:
         first, rest = parts
         if looks_like_unicode_emoji(first):
             return first, rest.strip()
-    # pas d’emoji détecté
     return None, s
 
 # --------------------------------------------------------------------------- #
@@ -113,18 +93,26 @@ class PollState:
     question: str
     choices: List[Choice]
     author_id: int
-    end_time: Optional[datetime] = None
+    end_time: Optional[datetime]
+    channel_id: int
     message_id: Optional[int] = None
-    channel_id: Optional[int] = None
-    # votes[user_id] = index du choix
-    votes: Dict[int, int] = field(default_factory=dict)
+    allow_multi: bool = False
+    # votes : user -> set d’index si multi, sinon int (index)
+    votes_single: Dict[int, int] = field(default_factory=dict)
+    votes_multi: Dict[int, set] = field(default_factory=dict)
 
     @property
     def counts(self) -> List[int]:
         c = [0] * len(self.choices)
-        for idx in self.votes.values():
-            if 0 <= idx < len(c):
-                c[idx] += 1
+        if self.allow_multi:
+            for idxs in self.votes_multi.values():
+                for i in idxs:
+                    if 0 <= i < len(c):
+                        c[i] += 1
+        else:
+            for i in self.votes_single.values():
+                if 0 <= i < len(c):
+                    c[i] += 1
         return c
 
     @property
@@ -132,61 +120,70 @@ class PollState:
         return sum(self.counts)
 
 # --------------------------------------------------------------------------- #
-# Views
+# Boutons de vote
 # --------------------------------------------------------------------------- #
 
 
 class PollButton(discord.ui.Button):
     def __init__(self, index: int, choice: Choice):
-        # Valide/normalise l'emoji
         valid_emoji = coerce_emoji(choice.emoji)
-        # Discord exige AU MOINS un label OU un emoji valide.
-        # Pour rester "emoji-only" quand l'emoji est valide, on met un label invisible (zero-width space).
+        # Discord exige AU MOINS un label ou un emoji :
         label_text = "\u200b" if valid_emoji else (choice.label or "Choix")
         super().__init__(
             style=discord.ButtonStyle.primary,
             label=label_text,
             emoji=valid_emoji,
-            row=min(index // 5, 4),  # 5 boutons par ligne max
+            row=min(index // 5, 4),
         )
         self.index = index
 
     async def callback(self, interaction: discord.Interaction):
-        cog: Polls = self.view.cog  # type: ignore
-        state: PollState = self.view.state  # type: ignore
+        view: PollView = self.view  # type: ignore
+        cog: Polls = view.cog
+        state: PollState = view.state
 
         if state.end_time and discord.utils.utcnow() >= state.end_time:
-            return await interaction.response.send_message(
-                "⏰ Le sondage est déjà terminé.", ephemeral=True
-            )
+            return await interaction.response.send_message("⏰ Le sondage est déjà terminé.", ephemeral=True)
 
-        user_id = interaction.user.id
-        previous = state.votes.get(user_id)
-        state.votes[user_id] = self.index
-        changed = (previous != self.index)
+        uid = interaction.user.id
+        if state.allow_multi:
+            cur = state.votes_multi.get(uid, set())
+            if self.index in cur:
+                cur.remove(self.index)       # toggle off
+                changed = True
+            else:
+                cur.add(self.index)          # toggle on
+                changed = True
+            state.votes_multi[uid] = cur
+        else:
+            prev = state.votes_single.get(uid)
+            state.votes_single[uid] = self.index
+            changed = (prev != self.index)
 
         # MAJ embed
-        if state.channel_id and state.message_id:
-            channel = cog.bot.get_channel(state.channel_id)
-            if isinstance(channel, (discord.TextChannel, discord.Thread, discord.VoiceChannel)):
-                try:
-                    msg = await channel.fetch_message(state.message_id)
-                except discord.HTTPException:
-                    return
-                embed = cog.build_running_embed(state, interaction.user)
-                with contextlib.suppress(discord.HTTPException):
-                    await msg.edit(embed=embed)
+        channel = cog.bot.get_channel(state.channel_id)
+        if isinstance(channel, (discord.TextChannel, discord.Thread, discord.VoiceChannel)) and state.message_id:
+            try:
+                msg = await channel.fetch_message(state.message_id)
+            except discord.HTTPException:
+                return
+            embed = cog.build_running_embed(state, interaction.user)
+            with contextlib.suppress(discord.HTTPException):
+                await msg.edit(embed=embed)
 
-        # Feedback
-        choice = state.choices[self.index]
+        # feedback
+        ch = state.choices[self.index]
         if changed:
-            await interaction.response.send_message(
-                f"✅ Vote enregistré pour **{choice.label}**.", ephemeral=True
-            )
+            if state.allow_multi:
+                sel = sorted(state.votes_multi[uid])
+                labels = [state.choices[i].label for i in sel]
+                await interaction.response.send_message(
+                    f"✅ Sélection mise à jour : {', '.join(labels) if labels else '—'}", ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(f"✅ Vote enregistré pour **{ch.label}**.", ephemeral=True)
         else:
-            await interaction.response.send_message(
-                "ℹ️ Tu avais déjà sélectionné ce choix.", ephemeral=True
-            )
+            await interaction.response.send_message("ℹ️ Pas de changement.", ephemeral=True)
 
 
 class PollView(discord.ui.View):
@@ -194,51 +191,191 @@ class PollView(discord.ui.View):
         super().__init__(timeout=timeout)
         self.cog = cog
         self.state = state
-        for i, choice in enumerate(state.choices):
-            self.add_item(PollButton(index=i, choice=choice))
+        for i, ch in enumerate(state.choices):
+            self.add_item(PollButton(i, ch))
 
     async def on_timeout(self) -> None:
-        # Sécurité : si la View timeout, on clôture proprement
-        if self.state.message_id and self.state.channel_id:
-            channel = self.cog.bot.get_channel(self.state.channel_id)
-            if isinstance(channel, (discord.TextChannel, discord.Thread, discord.VoiceChannel)):
-                with contextlib.suppress(Exception):
-                    msg = await channel.fetch_message(self.state.message_id)
-                    await self.cog.finalize_poll(msg, self.state)
+        # sécurité
+        channel = self.cog.bot.get_channel(self.state.channel_id)
+        if isinstance(channel, (discord.TextChannel, discord.Thread, discord.VoiceChannel)) and self.state.message_id:
+            with contextlib.suppress(Exception):
+                msg = await channel.fetch_message(self.state.message_id)
+                await self.cog.finalize_poll(msg, self.state)
 
 # --------------------------------------------------------------------------- #
-# Modal + starter
+# Wizard (vue éphémère) : salon + mode + nb choix
 # --------------------------------------------------------------------------- #
 
 
-class PollModal(discord.ui.Modal, title="Créer un sondage"):
-    question = discord.ui.TextInput(
-        label="Question du sondage",
-        placeholder="Ex : Quelle viennoiserie préférez-vous ?",
-        max_length=MAX_QUESTION_LENGTH,
-    )
-    options = discord.ui.TextInput(
-        label="Choix (1 par ligne, émoji optionnel au début)",
-        style=discord.TextStyle.paragraph,
-        placeholder="Ex :\n🥐 Croissant\n🍫 Pain au chocolat\n<:baguette:112233445566778899> Baguette",
-    )
-    duree = discord.ui.TextInput(
-        label="Durée en minutes (optionnel)",
-        required=False,
-        placeholder="Ex : 60",
-    )
-
+class PollWizard(discord.ui.View):
     def __init__(self, cog: "Polls"):
-        super().__init__(timeout=None)
+        super().__init__(timeout=300)
         self.cog = cog
+        self.target_channel: Optional[int] = None
+        self.allow_multi: bool = False
+        self.num_choices: int = 2
+
+    @discord.ui.channel_select(
+        cls=discord.ui.ChannelSelect,
+        channel_types=[discord.ChannelType.text],
+        placeholder="Choisir le salon (par défaut : ici)",
+    )
+    async def pick_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        channel = select.values[0] if select.values else None
+        self.target_channel = channel.id if isinstance(
+            channel, discord.TextChannel) else None
+        await interaction.response.defer()
+
+    @discord.ui.select(
+        placeholder="Mode de vote",
+        min_values=1, max_values=1,
+        options=[
+            discord.SelectOption(label="Choix unique", value="single",
+                                 emoji="1️⃣", description="1 vote par utilisateur"),
+            discord.SelectOption(label="Choix multiples", value="multi",
+                                 emoji="✅", description="Plusieurs votes par utilisateur"),
+        ]
+    )
+    async def pick_mode(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.allow_multi = (select.values[0] == "multi")
+        await interaction.response.defer()
+
+    @discord.ui.select(
+        placeholder="Nombre de choix (2–10)",
+        min_values=1, max_values=1,
+        options=[discord.SelectOption(label=str(i), value=str(i))
+                 for i in range(2, MAX_CHOICES + 1)]
+    )
+    async def pick_count(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.num_choices = int(select.values[0])
+        await interaction.response.defer()
+
+    @discord.ui.button(label="Continuer ➡️", style=discord.ButtonStyle.success)
+    async def continue_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # fallback : si pas de salon choisi -> salon courant
+        channel_id = self.target_channel or (
+            interaction.channel.id if interaction.channel else None)
+        if channel_id is None:
+            return await interaction.response.send_message("⚠️ Impossible de déterminer le salon.", ephemeral=True)
+
+        # ouvre le 1er modal : question + durée + choix 1..5
+        await interaction.response.send_modal(
+            ChoiceModalPart1(self.cog, channel_id,
+                             self.allow_multi, self.num_choices)
+        )
+
+# --------------------------------------------------------------------------- #
+# Modals pour saisir la question/durée + choix (5 inputs max par modal)
+# --------------------------------------------------------------------------- #
+
+
+class ChoiceModalPart1(discord.ui.Modal, title="Créer un sondage (1/2)"):
+    question = discord.ui.TextInput(
+        label="Question", max_length=MAX_QUESTION_LENGTH)
+    duree = discord.ui.TextInput(
+        label="Durée (minutes, optionnel)", required=False, placeholder="Ex : 60")
+
+    def __init__(self, cog: "Polls", channel_id: int, allow_multi: bool, total_choices: int):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.channel_id = channel_id
+        self.allow_multi = allow_multi
+        self.total_choices = total_choices
+        # Ajoute 1..min(5, total) inputs pour les choix (emoji + label possible dans le même input)
+        self.choice_inputs: List[discord.ui.TextInput] = []
+        first_batch = min(5, total_choices)
+        for i in range(first_batch):
+            ti = discord.ui.TextInput(
+                label=f"Choix {i+1}",
+                placeholder="Ex : 🥐 Croissant",
+                required=True,
+                max_length=MAX_CHOICE_LENGTH + 10,  # marge emoji
+            )
+            self.add_item(ti)
+            self.choice_inputs.append(ti)
 
     async def on_submit(self, interaction: discord.Interaction):
+        # validations basiques
         q = self.question.value.strip()
         if not q:
             return await interaction.response.send_message("⚠️ La question ne peut pas être vide.", ephemeral=True)
 
-        lines = [l.strip()
-                 for l in str(self.options.value).splitlines() if l.strip()]
+        d_minutes: Optional[int] = None
+        if self.duree.value.strip():
+            if not self.duree.value.strip().isdigit():
+                return await interaction.response.send_message("⚠️ La durée doit être un nombre (minutes).", ephemeral=True)
+            d_minutes = int(self.duree.value.strip())
+            if d_minutes <= 0:
+                return await interaction.response.send_message("⚠️ La durée doit être positive.", ephemeral=True)
+            if d_minutes > MAX_TIMEOUT_MINUTES:
+                return await interaction.response.send_message("⚠️ Durée max : 7 jours (10080).", ephemeral=True)
+
+        # stocke dans state temporaire de l'interaction (custom_id ne persiste pas entre modals -> on passe par message éphémère + followup)
+        # On garde ceci dans l'objet même et on chaine vers Part2 si besoin :
+        collected_lines = [ci.value for ci in self.choice_inputs]
+        remaining = self.total_choices - len(collected_lines)
+
+        if remaining > 0:
+            await interaction.response.send_modal(
+                ChoiceModalPart2(self.cog, self.channel_id, self.allow_multi,
+                                 q, d_minutes, collected_lines, remaining)
+            )
+        else:
+            # création directe
+            await self.cog.create_poll_from_inputs(interaction, self.channel_id, self.allow_multi, q, d_minutes, collected_lines)
+
+
+class ChoiceModalPart2(discord.ui.Modal, title="Créer un sondage (2/2)"):
+    def __init__(self, cog: "Polls", channel_id: int, allow_multi: bool,
+                 question: str, d_minutes: Optional[int], first_lines: List[str], remaining: int):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.channel_id = channel_id
+        self.allow_multi = allow_multi
+        self.question = question
+        self.d_minutes = d_minutes
+        self.first_lines = first_lines
+        self.choice_inputs: List[discord.ui.TextInput] = []
+        for i in range(remaining):
+            ti = discord.ui.TextInput(
+                label=f"Choix {len(first_lines)+i+1}",
+                placeholder="Ex : 🍫 Pain au chocolat",
+                required=True,
+                max_length=MAX_CHOICE_LENGTH + 10,
+            )
+            self.add_item(ti)
+            self.choice_inputs.append(ti)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        lines = self.first_lines + [ci.value for ci in self.choice_inputs]
+        await self.cog.create_poll_from_inputs(
+            interaction, self.channel_id, self.allow_multi, self.question, self.d_minutes, lines
+        )
+
+# --------------------------------------------------------------------------- #
+# Cog principal
+# --------------------------------------------------------------------------- #
+
+
+class Polls(commands.Cog):
+    """Sondages : choix du salon + mode (unique/multiples) + inputs séparés + barres + timer."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        self._sessions: Dict[int, PollState] = {}
+
+    # ----------- Création depuis les inputs (lignes "emoji + label") -------- #
+
+    async def create_poll_from_inputs(
+        self,
+        interaction: discord.Interaction,
+        channel_id: int,
+        allow_multi: bool,
+        question: str,
+        d_minutes: Optional[int],
+        lines: List[str],
+    ):
+        # Validations & parsing
         if len(lines) < 2:
             return await interaction.response.send_message("⚠️ Mets au moins deux choix.", ephemeral=True)
         if len(lines) > MAX_CHOICES:
@@ -248,64 +385,85 @@ class PollModal(discord.ui.Modal, title="Créer un sondage"):
         seen = set()
         for line in lines:
             emoji_raw, label = parse_choice_line(line)
+            label = label.strip()
             if not label:
                 return await interaction.response.send_message("⚠️ Un des choix est vide.", ephemeral=True)
             if len(label) > MAX_CHOICE_LENGTH:
                 return await interaction.response.send_message(
-                    f"⚠️ Chaque choix doit faire moins de {MAX_CHOICE_LENGTH} caractères.",
-                    ephemeral=True,
+                    f"⚠️ Chaque choix doit faire moins de {MAX_CHOICE_LENGTH} caractères.", ephemeral=True
                 )
             key = label.casefold()
             if key in seen:
                 return await interaction.response.send_message("⚠️ Choix en double détecté.", ephemeral=True)
             seen.add(key)
-            # on ne garde l'emoji que s'il est valide (sinon None pour éviter l'erreur API)
-            emoji = coerce_emoji(emoji_raw)
-            choices.append(Choice(label=label, emoji=emoji))
+            choices.append(Choice(label=label, emoji=coerce_emoji(emoji_raw)))
 
-        d_minutes: Optional[int] = None
-        dv = self.duree.value.strip()
-        if dv:
-            if not dv.isdigit():
-                return await interaction.response.send_message("⚠️ La durée doit être un nombre en minutes.", ephemeral=True)
-            d_minutes = int(dv)
-            if d_minutes <= 0:
-                return await interaction.response.send_message("⚠️ La durée doit être positive.", ephemeral=True)
-            if d_minutes > MAX_TIMEOUT_MINUTES:
-                return await interaction.response.send_message("⚠️ Durée max : 7 jours (10080 minutes).", ephemeral=True)
+        # Salon cible
+        channel = self.bot.get_channel(channel_id)
+        if not isinstance(channel, (discord.TextChannel, discord.Thread, discord.VoiceChannel)):
+            return await interaction.response.send_message("⚠️ Salon invalide.", ephemeral=True)
 
-        await self.cog.create_poll(interaction, q, choices, d_minutes)
+        # Permissions minimales
+        if isinstance(channel, discord.abc.GuildChannel):
+            me = channel.guild.me
+            if me is not None:
+                perms = channel.permissions_for(me)
+                if not (perms.view_channel and perms.send_messages and perms.embed_links):
+                    return await interaction.response.send_message(
+                        "⚠️ Il me manque des permissions (voir/envoyer/intégrer).", ephemeral=True
+                    )
 
+        end_time = discord.utils.utcnow() + timedelta(minutes=d_minutes) if d_minutes else None
+        state = PollState(
+            question=question,
+            choices=choices,
+            author_id=interaction.user.id,
+            end_time=end_time,
+            channel_id=channel.id,
+            allow_multi=allow_multi,
+        )
 
-class PollStarter(discord.ui.View):
-    def __init__(self, cog: "Polls"):
-        super().__init__(timeout=None)
-        self.cog = cog
+        embed = self.build_running_embed(state, interaction.user)
+        view = PollView(self, state, timeout=None)
 
-    @discord.ui.button(label="Créer un sondage 🗳️", style=discord.ButtonStyle.success)
-    async def open_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(PollModal(self.cog))
+        # On répond d'abord à la soumission du modal (évite “Interaction failed”)
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
 
-# --------------------------------------------------------------------------- #
-# Cog
-# --------------------------------------------------------------------------- #
+        try:
+            msg = await channel.send(
+                content=f"Sondage proposé par {interaction.user.mention} "
+                f"({'choix multiples' if allow_multi else 'choix unique'})",
+                embed=embed,
+                view=view,
+            )
+        except discord.HTTPException as exc:
+            return await interaction.followup.send(f"⚠️ Impossible de publier le sondage : {exc}", ephemeral=True)
 
+        state.message_id = msg.id
+        self._sessions[msg.id] = state
 
-class Polls(commands.Cog):
-    """Sondages : Modal + boutons émojis (validés) + barres & compte à rebours."""
+        parts = [f"✅ Sondage publié dans {channel.mention}"]
+        if end_time:
+            parts.append(
+                f"Fin dans {fmt_remaining(int((end_time - discord.utils.utcnow()).total_seconds()))}")
+        else:
+            parts.append("Durée indéterminée")
 
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-        self._sessions: Dict[int, PollState] = {}
+        await interaction.followup.send(" • ".join(parts) + f"\n{msg.jump_url}", ephemeral=True)
 
-    # ------------------------------ Embeds -------------------------------- #
+        if end_time:
+            asyncio.create_task(self.run_countdown_and_close(msg, state))
+
+    # -------------------------------- Embeds ------------------------------- #
 
     def build_running_embed(self, state: PollState, author: discord.abc.User) -> discord.Embed:
         counts = state.counts
         total = sum(counts)
         emb = discord.Embed(
             title="📊 Nouveau sondage",
-            description=f"{state.question}\n\nCliquez sur un bouton pour voter.",
+            description=f"{state.question}\n\n"
+            f"{'Sélection multiple autorisée.' if state.allow_multi else 'Un seul choix par personne.'}",
             color=discord.Color.blurple(),
         )
         emb.set_author(
@@ -313,7 +471,6 @@ class Polls(commands.Cog):
             icon_url=getattr(
                 getattr(author, "display_avatar", None), "url", None),
         )
-
         for ch, c in zip(state.choices, counts):
             pct = (c / total) if total > 0 else 0.0
             bar = make_bar(pct)
@@ -343,7 +500,6 @@ class Polls(commands.Cog):
             icon_url=getattr(
                 getattr(author, "display_avatar", None), "url", None),
         )
-
         for ch, c in zip(state.choices, counts):
             pct = (c / total) if total > 0 else 0.0
             bar = make_bar(pct)
@@ -351,17 +507,14 @@ class Polls(commands.Cog):
             prefix = f"{ch.emoji} " if ch.emoji else ""
             emb.add_field(name=f"{prefix}{ch.label}",
                           value=f"{bar}  **{c}** vote(s) • {pct_txt}", inline=False)
-
         emb.set_footer(text=f"{total} vote(s) • Sondage terminé")
         return emb
 
-    # ------------------------------ Core ---------------------------------- #
+    # --------------------------- Countdown & clôture ------------------------ #
 
     async def run_countdown_and_close(self, message: discord.Message, state: PollState):
-        """MAJ du footer chaque seconde puis clôture et verrouillage des boutons."""
         if not state.end_time:
             return
-
         while True:
             now = discord.utils.utcnow()
             remaining = int((state.end_time - now).total_seconds())
@@ -371,12 +524,9 @@ class Polls(commands.Cog):
             with contextlib.suppress(discord.HTTPException):
                 await message.edit(embed=embed)
             await asyncio.sleep(1)
-
         await self.finalize_poll(message, state)
 
     async def finalize_poll(self, message: discord.Message, state: PollState):
-        """Remplace l’embed par les résultats et désactive tous les boutons."""
-        # View identique mais désactivée
         try:
             view = PollView(self, state)
             for child in view.children:
@@ -384,86 +534,17 @@ class Polls(commands.Cog):
                     child.disabled = True
         except Exception:
             view = None
-
         closed = self.build_closed_embed(state, message.author)
         with contextlib.suppress(discord.HTTPException):
             await message.edit(content="**Sondage terminé** ⏰", embed=closed, view=view)
 
-    async def create_poll(
-        self,
-        interaction: discord.Interaction,
-        question: str,
-        choices: List[Choice],
-        duree_minutes: Optional[int],
-    ):
-        # Salon cible
-        target = interaction.channel
-        if target is None:
-            return await interaction.response.send_message(
-                "⚠️ Impossible de déterminer le salon de publication.", ephemeral=True
-            )
+    # ------------------------------ Commande ------------------------------- #
 
-        # Permissions minimales
-        if isinstance(target, discord.abc.GuildChannel):
-            me = target.guild.me
-            if me is not None:
-                perms = target.permissions_for(me)
-                if not perms.view_channel or not perms.send_messages or not perms.embed_links:
-                    return await interaction.response.send_message(
-                        "⚠️ Il me manque des permissions (voir/envoyer/intégrer).",
-                        ephemeral=True,
-                    )
-
-        end_time = discord.utils.utcnow(
-        ) + timedelta(minutes=duree_minutes) if duree_minutes else None
-        state = PollState(
-            question=question,
-            choices=choices,
-            author_id=interaction.user.id,
-            end_time=end_time,
-        )
-        embed = self.build_running_embed(state, interaction.user)
-        view = PollView(self, state, timeout=None)
-
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
-
-        try:
-            msg = await target.send(
-                content=f"Sondage proposé par {interaction.user.mention}",
-                embed=embed,
-                view=view,
-            )
-        except discord.HTTPException as exc:
-            return await interaction.followup.send(
-                f"⚠️ Impossible de publier le sondage : {exc}", ephemeral=True
-            )
-
-        state.message_id = msg.id
-        state.channel_id = msg.channel.id
-        self._sessions[msg.id] = state
-
-        loc = target.mention if isinstance(
-            target, discord.abc.GuildChannel) else "cette conversation"
-        parts = [f"✅ Sondage publié dans {loc}"]
-        if end_time:
-            parts.append(
-                f"Fin dans {fmt_remaining(int((end_time - discord.utils.utcnow()).total_seconds()))}")
-        else:
-            parts.append("Durée indéterminée")
-
-        await interaction.followup.send(" • ".join(parts) + f"\n{msg.jump_url}", ephemeral=True)
-
-        if end_time:
-            asyncio.create_task(self.run_countdown_and_close(msg, state))
-
-    # ------------------------------ Slash cmd ----------------------------- #
-
-    @app_commands.command(name="sondage", description="Ouvrir le formulaire de création de sondage (avec émojis)")
+    @app_commands.command(name="sondage", description="Assistant de création (salon, mode, nombre de choix)")
     async def sondage(self, interaction: discord.Interaction):
         await interaction.response.send_message(
-            "Clique sur le bouton ci-dessous pour créer ton sondage 👇",
-            view=PollStarter(self),
+            "Configure ton sondage ci-dessous 👇",
+            view=PollWizard(self),
             ephemeral=True,
         )
 
