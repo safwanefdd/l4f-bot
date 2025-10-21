@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
-from datetime import timedelta
+from datetime import datetime, timedelta
+from typing import Optional
 
 import discord
 from discord import app_commands
@@ -25,11 +27,117 @@ CHOICE_EMOJIS = [
 ]
 
 
+def _fmt_remaining(seconds: int) -> str:
+    """HH:MM:SS (ou MM:SS si < 1h)."""
+    if seconds < 0:
+        seconds = 0
+    h, r = divmod(seconds, 3600)
+    m, s = divmod(r, 60)
+    if h:
+        return f"{h:02d}:{m:02d}:{s:02d}"
+    return f"{m:02d}:{s:02d}"
+
+
+def _make_bar(pct: float, size: int = 20) -> str:
+    """Barre de progression texte façon Discord."""
+    if pct < 0:
+        pct = 0.0
+    if pct > 1:
+        pct = 1.0
+    filled = int(round(pct * size))
+    return "█" * filled + "░" * (size - filled)
+
+
 class Polls(commands.Cog):
     """Gestion des sondages via commandes slash."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+
+    # --------------------------- TÂCHES INTERNES --------------------------- #
+
+    async def _finalize_poll(
+        self,
+        message: discord.Message,
+        choices: list[str],
+        emojis: list[str],
+        author: discord.abc.User,
+    ) -> None:
+        """Clôture le sondage, calcule les résultats et affiche un embed final."""
+        # Récupération fraîche du message pour avoir les réactions à jour
+        try:
+            msg = await message.channel.fetch_message(message.id)
+        except discord.HTTPException:
+            return
+
+        # Compter les votes par emoji (on retire le +1 du bot qui a posé les réactions)
+        counts: list[int] = []
+        total = 0
+        for emoji in emojis:
+            reaction = discord.utils.get(msg.reactions, emoji=emoji)
+            c = (reaction.count if reaction else 0) - 1
+            c = max(c, 0)
+            counts.append(c)
+            total += c
+
+        result = discord.Embed(
+            title="📊 Sondage terminé",
+            description="Voici les résultats :",
+            color=discord.Color.dark_gray(),
+        )
+        result.set_author(name=getattr(author, "display_name", "Auteur"), icon_url=getattr(author.display_avatar, "url", discord.Embed.Empty))
+
+        for label, emoji, c in zip(choices, emojis, counts):
+            pct = (c / total) if total > 0 else 0.0
+            bar = _make_bar(pct)
+            pct_txt = f"{int(round(pct * 100))}%"
+            result.add_field(
+                name=f"{emoji} {label}",
+                value=f"{bar}  **{c}** vote(s) • {pct_txt}",
+                inline=False,
+            )
+
+        footer = f"{total} vote(s) • Sondage terminé"
+        result.set_footer(text=footer)
+
+        # Empêche de nouveaux votes (si le bot a la permission)
+        with contextlib.suppress(discord.HTTPException):
+            await msg.clear_reactions()
+
+        # Mise à jour du message original
+        with contextlib.suppress(discord.HTTPException):
+            await msg.edit(content="**Sondage terminé** ⏰", embed=result)
+
+    async def _run_countdown_and_close(
+        self,
+        message: discord.Message,
+        embed: discord.Embed,
+        end_time: Optional[datetime],
+        choices: list[str],
+        emojis: list[str],
+        author: discord.abc.User,
+    ) -> None:
+        """Met à jour le footer chaque seconde jusqu'à la fin, puis clôture."""
+        if end_time is None:
+            return
+
+        # MAJ “temps restant” toutes les 1 sec
+        while True:
+            now = discord.utils.utcnow()
+            remaining = int((end_time - now).total_seconds())
+            if remaining <= 0:
+                break
+
+            embed.set_footer(text=f"Se termine dans {_fmt_remaining(remaining)}")
+            with contextlib.suppress(discord.HTTPException):
+                await message.edit(embed=embed)
+
+            await asyncio.sleep(1)
+
+        # Terminé -> afficher les résultats
+        await self._finalize_poll(message, choices, emojis, author)
+
+    # ------------------------------ COMMANDE ------------------------------ #
 
     @app_commands.command(name="sondage", description="Créer un sondage clair avec réactions")
     @app_commands.rename(set_timeout="duree")
@@ -188,10 +296,11 @@ class Polls(commands.Cog):
                     )
                     return
 
-        end_time = None
+        end_time: Optional[datetime] = None
         if set_timeout is not None:
             end_time = discord.utils.utcnow() + timedelta(minutes=set_timeout)
 
+        # EMBED INITIAL
         embed = discord.Embed(
             title="📊 Nouveau sondage",
             description=f"{question}\n\nRéagissez avec l'emoji correspondant pour voter.",
@@ -211,16 +320,15 @@ class Polls(commands.Cog):
             )
 
         if end_time is not None:
-            absolute_end = discord.utils.format_dt(end_time, style="f")
-            relative_end = discord.utils.format_dt(end_time, style="R")
-            embed.set_footer(text=f"Se termine {absolute_end} ({relative_end})")
-            embed.timestamp = end_time
+            remaining = int((end_time - discord.utils.utcnow()).total_seconds())
+            embed.set_footer(text=f"Se termine dans {_fmt_remaining(remaining)}")
         else:
             embed.set_footer(text="Aucune durée définie")
 
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
 
+        # ENVOI DU SONDAGE
         try:
             poll_message = await target_channel.send(
                 content=f"Sondage proposé par {interaction.user.mention}",
@@ -232,6 +340,7 @@ class Polls(commands.Cog):
             )
             return
 
+        # RÉACTIONS POUR VOTER
         try:
             for emoji in CHOICE_EMOJIS[: len(cleaned_choices)]:
                 await poll_message.add_reaction(emoji)
@@ -245,6 +354,7 @@ class Polls(commands.Cog):
             )
             return
 
+        # RÉSUMÉ ÉPHÉMÈRE
         location: str
         if isinstance(target_channel, discord.abc.GuildChannel):
             location = target_channel.mention
@@ -253,19 +363,27 @@ class Polls(commands.Cog):
 
         summary_parts = [f"✅ Sondage publié dans {location}"]
         if end_time is not None:
-            formatted_end = discord.utils.format_dt(end_time, style="f")
-            relative_end = discord.utils.format_dt(end_time, style="R")
-            summary_parts.append(f"Fin {formatted_end} ({relative_end})")
+            summary_parts.append(f"Fin dans {_fmt_remaining(int((end_time - discord.utils.utcnow()).total_seconds()))}")
         else:
             summary_parts.append("Durée indéterminée")
-
-        if set_timeout is not None:
-            summary_parts.append(f"setTimeOut : {set_timeout} minute(s)")
 
         await interaction.followup.send(
             " • ".join(summary_parts) + f"\n{poll_message.jump_url}",
             ephemeral=True,
         )
+
+        # COMPTE À REBOURS + CLÔTURE
+        if end_time is not None:
+            asyncio.create_task(
+                self._run_countdown_and_close(
+                    poll_message,
+                    embed,
+                    end_time,
+                    cleaned_choices,
+                    CHOICE_EMOJIS[: len(cleaned_choices)],
+                    interaction.user,
+                )
+            )
 
 
 async def setup(bot: commands.Bot) -> None:
