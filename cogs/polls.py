@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from datetime import timedelta
 
 import discord
@@ -10,6 +11,18 @@ MAX_CHOICES = 10
 MAX_QUESTION_LENGTH = 256
 MAX_CHOICE_LENGTH = 100
 MAX_TIMEOUT_MINUTES = 7 * 24 * 60  # une semaine
+CHOICE_EMOJIS = [
+    "1️⃣",
+    "2️⃣",
+    "3️⃣",
+    "4️⃣",
+    "5️⃣",
+    "6️⃣",
+    "7️⃣",
+    "8️⃣",
+    "9️⃣",
+    "🔟",
+]
 
 
 class Polls(commands.Cog):
@@ -18,7 +31,7 @@ class Polls(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="sondage", description="Créer un sondage natif Discord")
+    @app_commands.command(name="sondage", description="Créer un sondage clair avec réactions")
     @app_commands.rename(set_timeout="setTimeOut")
     @app_commands.describe(
         question="Intitulé du sondage",
@@ -62,16 +75,6 @@ class Polls(commands.Cog):
         if len(question) > MAX_QUESTION_LENGTH:
             await interaction.response.send_message(
                 f"⚠️ La question doit faire moins de {MAX_QUESTION_LENGTH} caractères.",
-                ephemeral=True,
-            )
-            return
-
-        if not all(
-            hasattr(discord, attr)
-            for attr in ("Poll", "PollAnswer", "PollMedia", "PollDuration")
-        ):
-            await interaction.response.send_message(
-                "⚠️ Cette version du bot ne supporte pas les sondages natifs Discord.",
                 ephemeral=True,
             )
             return
@@ -166,42 +169,89 @@ class Polls(commands.Cog):
                         ephemeral=True,
                     )
                     return
+                if isinstance(target_channel, discord.Thread) and not permissions.send_messages_in_threads:
+                    await interaction.response.send_message(
+                        "⚠️ Je ne peux pas écrire dans ce fil de discussion.",
+                        ephemeral=True,
+                    )
+                    return
+                if not permissions.add_reactions:
+                    await interaction.response.send_message(
+                        "⚠️ Je ne peux pas ajouter de réactions dans ce salon.",
+                        ephemeral=True,
+                    )
+                    return
+                if not permissions.embed_links:
+                    await interaction.response.send_message(
+                        "⚠️ J'ai besoin de la permission d'intégrer des liens pour afficher le sondage.",
+                        ephemeral=True,
+                    )
+                    return
 
         end_time = None
         if set_timeout is not None:
             end_time = discord.utils.utcnow() + timedelta(minutes=set_timeout)
 
-        poll_answers: list[discord.PollAnswer] = [
-            discord.PollAnswer(text=discord.PollMedia(text=choice_text))
-            for choice_text in cleaned_choices
-        ]
-
-        poll_duration: discord.PollDuration | None = None
-        if set_timeout is not None:
-            poll_duration = discord.PollDuration(minutes=set_timeout)
-
-        poll = discord.Poll(
-            question=discord.PollMedia(text=question),
-            answers=poll_answers,
-            allow_multiselect=False,
-            duration=poll_duration,
+        embed = discord.Embed(
+            title="📊 Nouveau sondage",
+            description=f"{question}\n\nRéagissez avec l'emoji correspondant pour voter.",
+            color=discord.Color.blurple(),
         )
+        embed.set_author(
+            name=interaction.user.display_name,
+            icon_url=interaction.user.display_avatar.url,
+        )
+
+        for index, choice_text in enumerate(cleaned_choices, start=1):
+            emoji = CHOICE_EMOJIS[index - 1]
+            embed.add_field(
+                name=f"{emoji} Choix {index}",
+                value=choice_text,
+                inline=False,
+            )
+
+        if end_time is not None:
+            absolute_end = discord.utils.format_dt(end_time, style="f")
+            relative_end = discord.utils.format_dt(end_time, style="R")
+            embed.set_footer(text=f"Se termine {absolute_end} ({relative_end})")
+            embed.timestamp = end_time
+        else:
+            embed.set_footer(text="Aucune durée définie")
 
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
 
         try:
             poll_message = await target_channel.send(
-                content=f"Sondage proposé par **{interaction.user.display_name}**",
-                poll=poll,
+                content=f"Sondage proposé par {interaction.user.mention}",
+                embed=embed,
             )
-        except Exception as exc:  # pragma: no cover - dépend de l'API Discord
+        except discord.HTTPException as exc:
             await interaction.followup.send(
                 f"⚠️ Impossible de publier le sondage : {exc}", ephemeral=True
             )
             return
 
-        summary_parts = [f"✅ Sondage publié dans {target_channel.mention}"]
+        try:
+            for emoji in CHOICE_EMOJIS[: len(cleaned_choices)]:
+                await poll_message.add_reaction(emoji)
+        except discord.HTTPException as exc:
+            with contextlib.suppress(discord.HTTPException):
+                await poll_message.delete()
+            await interaction.followup.send(
+                "⚠️ Le sondage a été créé mais impossible d'ajouter les réactions "
+                f"({exc}). Merci de vérifier mes permissions.",
+                ephemeral=True,
+            )
+            return
+
+        location: str
+        if isinstance(target_channel, discord.abc.GuildChannel):
+            location = target_channel.mention
+        else:
+            location = "cette conversation"
+
+        summary_parts = [f"✅ Sondage publié dans {location}"]
         if end_time is not None:
             formatted_end = discord.utils.format_dt(end_time, style="f")
             relative_end = discord.utils.format_dt(end_time, style="R")
@@ -210,7 +260,7 @@ class Polls(commands.Cog):
             summary_parts.append("Durée indéterminée")
 
         if set_timeout is not None:
-            summary_parts.append(f"setTimeOut : {set_timeout} minute(s)")
+            summary_parts.append(f"setTimeOut : {set_timeout} minute(s)")
 
         await interaction.followup.send(
             " • ".join(summary_parts) + f"\n{poll_message.jump_url}",
