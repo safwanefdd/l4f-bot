@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Union
@@ -37,6 +38,38 @@ def make_bar(pct: float, size: int = BAR_SIZE) -> str:
     return "█" * filled + "░" * (size - filled)
 
 
+def looks_like_unicode_emoji(token: str) -> bool:
+    """Heuristique simple pour accepter les vrais émojis Unicode et éviter le texte/signes."""
+    if not token or token.isalnum():
+        return False
+    # On considère émoji si au moins un caractère a une catégorie 'So'/'Sk' (Symbol/Other/Modifier)
+    return any(unicodedata.category(ch) in ("So", "Sk") for ch in token)
+
+
+def coerce_emoji(val: Union[str, discord.PartialEmoji, None]) -> Optional[Union[str, discord.PartialEmoji]]:
+    """Retourne un émoji valide pour Discord, sinon None."""
+    if val is None:
+        return None
+    if isinstance(val, discord.PartialEmoji):
+        return val
+    s = str(val).strip()
+    if not s:
+        return None
+    # custom <:name:id>
+    if s.startswith("<") and s.endswith(">"):
+        try:
+            pe = discord.PartialEmoji.from_str(s)
+            return pe
+        except Exception:
+            return None
+    # unicode
+    return s if looks_like_unicode_emoji(s) else None
+
+# --------------------------------------------------------------------------- #
+# Parsing des lignes de choix
+# --------------------------------------------------------------------------- #
+
+
 def parse_choice_line(line: str) -> Tuple[Optional[Union[str, discord.PartialEmoji]], str]:
     """
     Parse une ligne 'emoji optionnel + espace + libellé'.
@@ -55,12 +88,11 @@ def parse_choice_line(line: str) -> Tuple[Optional[Union[str, discord.PartialEmo
             return pe, label
         except Exception:
             pass
-    # Unicode au début (très permissif : on prend le premier grapheme avant espace)
+    # Unicode au début (token avant le 1er espace)
     parts = s.split(" ", 1)
-    if len(parts) == 2 and parts[0]:
+    if len(parts) == 2:
         first, rest = parts
-        # heuristique : si rest non vide et first contient un codepoint non alphanum, on le traite comme emoji
-        if not first.isalnum():
+        if looks_like_unicode_emoji(first):
             return first, rest.strip()
     # pas d’emoji détecté
     return None, s
@@ -106,11 +138,15 @@ class PollState:
 
 class PollButton(discord.ui.Button):
     def __init__(self, index: int, choice: Choice):
-        # On n’affiche PAS de label, seulement l’emoji si fourni
+        # Valide/normalise l'emoji
+        valid_emoji = coerce_emoji(choice.emoji)
+        # Discord exige AU MOINS un label OU un emoji valide.
+        # Pour rester "emoji-only" quand l'emoji est valide, on met un label invisible (zero-width space).
+        label_text = "\u200b" if valid_emoji else (choice.label or "Choix")
         super().__init__(
             style=discord.ButtonStyle.primary,
-            label=None,
-            emoji=choice.emoji,
+            label=label_text,
+            emoji=valid_emoji,
             row=min(index // 5, 4),  # 5 boutons par ligne max
         )
         self.index = index
@@ -162,7 +198,7 @@ class PollView(discord.ui.View):
             self.add_item(PollButton(index=i, choice=choice))
 
     async def on_timeout(self) -> None:
-        # Sécurité si jamais la View time-out : on clôture proprement
+        # Sécurité : si la View timeout, on clôture proprement
         if self.state.message_id and self.state.channel_id:
             channel = self.cog.bot.get_channel(self.state.channel_id)
             if isinstance(channel, (discord.TextChannel, discord.Thread, discord.VoiceChannel)):
@@ -211,7 +247,7 @@ class PollModal(discord.ui.Modal, title="Créer un sondage"):
         choices: List[Choice] = []
         seen = set()
         for line in lines:
-            emoji, label = parse_choice_line(line)
+            emoji_raw, label = parse_choice_line(line)
             if not label:
                 return await interaction.response.send_message("⚠️ Un des choix est vide.", ephemeral=True)
             if len(label) > MAX_CHOICE_LENGTH:
@@ -223,13 +259,16 @@ class PollModal(discord.ui.Modal, title="Créer un sondage"):
             if key in seen:
                 return await interaction.response.send_message("⚠️ Choix en double détecté.", ephemeral=True)
             seen.add(key)
+            # on ne garde l'emoji que s'il est valide (sinon None pour éviter l'erreur API)
+            emoji = coerce_emoji(emoji_raw)
             choices.append(Choice(label=label, emoji=emoji))
 
         d_minutes: Optional[int] = None
-        if self.duree.value.strip():
-            if not self.duree.value.strip().isdigit():
+        dv = self.duree.value.strip()
+        if dv:
+            if not dv.isdigit():
                 return await interaction.response.send_message("⚠️ La durée doit être un nombre en minutes.", ephemeral=True)
-            d_minutes = int(self.duree.value.strip())
+            d_minutes = int(dv)
             if d_minutes <= 0:
                 return await interaction.response.send_message("⚠️ La durée doit être positive.", ephemeral=True)
             if d_minutes > MAX_TIMEOUT_MINUTES:
@@ -253,7 +292,7 @@ class PollStarter(discord.ui.View):
 
 
 class Polls(commands.Cog):
-    """Sondages avec Modal + boutons émojis + barres de progression et timer."""
+    """Sondages : Modal + boutons émojis (validés) + barres & compte à rebours."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -337,7 +376,7 @@ class Polls(commands.Cog):
 
     async def finalize_poll(self, message: discord.Message, state: PollState):
         """Remplace l’embed par les résultats et désactive tous les boutons."""
-        # Re-crée une view identique mais disabled
+        # View identique mais désactivée
         try:
             view = PollView(self, state)
             for child in view.children:
