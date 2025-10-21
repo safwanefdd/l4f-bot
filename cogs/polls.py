@@ -19,6 +19,7 @@ MAX_TIMEOUT_MINUTES = 7 * 24 * 60  # une semaine
 # Helpers d'affichage
 # --------------------------------------------------------------------------- #
 
+
 def fmt_remaining(seconds: int) -> str:
     """HH:MM:SS (ou MM:SS si < 1h)."""
     if seconds < 0:
@@ -26,6 +27,7 @@ def fmt_remaining(seconds: int) -> str:
     h, r = divmod(seconds, 3600)
     m, s = divmod(r, 60)
     return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
 
 def make_bar(pct: float, size: int = 20) -> str:
     """Barre de progression textuelle."""
@@ -36,6 +38,7 @@ def make_bar(pct: float, size: int = 20) -> str:
 # --------------------------------------------------------------------------- #
 # Modèle de session de sondage (en mémoire)
 # --------------------------------------------------------------------------- #
+
 
 @dataclass
 class PollState:
@@ -64,6 +67,7 @@ class PollState:
 # Vue (boutons) pour le sondage
 # --------------------------------------------------------------------------- #
 
+
 class PollView(discord.ui.View):
     def __init__(self, cog: "Polls", state: PollState, *, timeout: Optional[float] = None):
         super().__init__(timeout=timeout)
@@ -83,10 +87,12 @@ class PollView(discord.ui.View):
                     msg = await channel.fetch_message(self.state.message_id)
                     await self.cog.finalize_poll(msg, self.state)
 
+
 class PollButton(discord.ui.Button):
     def __init__(self, index: int, label_text: str):
         # style par défaut ; on n’affiche pas les votes ici (ils sont dans l’embed)
-        super().__init__(style=discord.ButtonStyle.primary, label=label_text, row=min(index // 3, 4))
+        super().__init__(style=discord.ButtonStyle.primary,
+                         label=label_text, row=min(index // 3, 4))
         self.index = index
 
     async def callback(self, interaction: discord.Interaction):
@@ -113,7 +119,8 @@ class PollButton(discord.ui.Button):
                     msg = await channel.fetch_message(state.message_id)
                 except discord.HTTPException:
                     return
-                embed = cog.build_running_embed(state, msg.author if hasattr(msg, "author") else interaction.user)
+                embed = cog.build_running_embed(
+                    state, msg.author if hasattr(msg, "author") else interaction.user)
                 with contextlib.suppress(discord.HTTPException):
                     await msg.edit(embed=embed)
 
@@ -130,6 +137,7 @@ class PollButton(discord.ui.Button):
 # --------------------------------------------------------------------------- #
 # Le Cog principal
 # --------------------------------------------------------------------------- #
+
 
 class Polls(commands.Cog):
     """Gestion des sondages via commandes slash (UI boutons + barres)."""
@@ -149,18 +157,23 @@ class Polls(commands.Cog):
             description=f"{state.question}\n\nCliquez sur un bouton pour voter.",
             color=discord.Color.blurple(),
         )
-        emb.set_author(name=getattr(author, "display_name", "Auteur"),
-                       icon_url=getattr(author.display_avatar, "url", discord.Embed.Empty))
+        emb.set_author(
+            name=getattr(author, "display_name", "Auteur"),
+            icon_url=getattr(
+                getattr(author, "display_avatar", None), "url", None),
+        )
 
         for label, c in zip(state.choices, counts):
             pct = (c / total) if total > 0 else 0.0
             bar = make_bar(pct)
             pct_txt = f"{int(round(pct * 100))}%"
-            emb.add_field(name=label, value=f"{bar}  **{c}** vote(s) • {pct_txt}", inline=False)
+            emb.add_field(
+                name=label, value=f"{bar}  **{c}** vote(s) • {pct_txt}", inline=False)
 
         # Footer (compte à rebours si end_time)
         if state.end_time:
-            remaining = int((state.end_time - discord.utils.utcnow()).total_seconds())
+            remaining = int(
+                (state.end_time - discord.utils.utcnow()).total_seconds())
             emb.set_footer(text=f"Se termine dans {fmt_remaining(remaining)}")
         else:
             emb.set_footer(text="Aucune durée définie")
@@ -174,14 +187,18 @@ class Polls(commands.Cog):
             description="Voici les résultats :",
             color=discord.Color.dark_gray(),
         )
-        emb.set_author(name=getattr(author, "display_name", "Auteur"),
-                       icon_url=getattr(author.display_avatar, "url", discord.Embed.Empty))
+        emb.set_author(
+            name=getattr(author, "display_name", "Auteur"),
+            icon_url=getattr(
+                getattr(author, "display_avatar", None), "url", None),
+        )
 
         for label, c in zip(state.choices, counts):
             pct = (c / total) if total > 0 else 0.0
             bar = make_bar(pct)
             pct_txt = f"{int(round(pct * 100))}%"
-            emb.add_field(name=label, value=f"{bar}  **{c}** vote(s) • {pct_txt}", inline=False)
+            emb.add_field(
+                name=label, value=f"{bar}  **{c}** vote(s) • {pct_txt}", inline=False)
 
         emb.set_footer(text=f"{total} vote(s) • Sondage terminé")
         return emb
@@ -273,7 +290,8 @@ class Polls(commands.Cog):
                 f"⚠️ La question doit faire moins de {MAX_QUESTION_LENGTH} caractères.", ephemeral=True
             )
 
-        raw = [choix1, choix2, choix3, choix4, choix5, choix6, choix7, choix8, choix9, choix10]
+        raw = [choix1, choix2, choix3, choix4, choix5,
+               choix6, choix7, choix8, choix9, choix10]
         cleaned: List[str] = []
         seen = set()
         for ch in raw:
@@ -339,7 +357,8 @@ class Polls(commands.Cog):
                     )
 
         # --- préparation état & embed ---
-        end_time = discord.utils.utcnow() + timedelta(minutes=set_timeout) if set_timeout else None
+        end_time = discord.utils.utcnow(
+        ) + timedelta(minutes=set_timeout) if set_timeout else None
         state = PollState(
             question=question,
             choices=cleaned,
@@ -365,10 +384,12 @@ class Polls(commands.Cog):
         self._sessions[msg.id] = state
 
         # résumé éphémère
-        loc = target.mention if isinstance(target, discord.abc.GuildChannel) else "cette conversation"
+        loc = target.mention if isinstance(
+            target, discord.abc.GuildChannel) else "cette conversation"
         parts = [f"✅ Sondage publié dans {loc}"]
         if end_time:
-            parts.append(f"Fin dans {fmt_remaining(int((end_time - discord.utils.utcnow()).total_seconds()))}")
+            parts.append(
+                f"Fin dans {fmt_remaining(int((end_time - discord.utils.utcnow()).total_seconds()))}")
         else:
             parts.append("Durée indéterminée")
 
