@@ -11,6 +11,7 @@ INITIAL_EXTENSIONS = [
     "cogs.panel",
     "cogs.welcome",
     "cogs.stats",
+    "cogs.polls",
     "cogs.admin",
     "cogs.reaction_roles_wizard",
 ]
