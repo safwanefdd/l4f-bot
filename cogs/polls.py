@@ -29,6 +29,7 @@ class Polls(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="sondage", description="Créer un sondage avec réactions pour voter")
+    @app_commands.rename(set_timeout="setTimeOut")
     @app_commands.describe(
         question="Intitulé du sondage",
         choix1="Premier choix (obligatoire)",
@@ -41,7 +42,7 @@ class Polls(commands.Cog):
         choix8="Huitième choix (optionnel)",
         choix9="Neuvième choix (optionnel)",
         choix10="Dixième choix (optionnel)",
-        timeout="Durée du sondage en minutes (optionnel)",
+        set_timeout="Durée du sondage en minutes (optionnel)",
         salon="Salon où publier le sondage (par défaut : ici)",
     )
     async def sondage(
@@ -58,7 +59,7 @@ class Polls(commands.Cog):
         choix8: str | None = None,
         choix9: str | None = None,
         choix10: str | None = None,
-        timeout: int | None = None,
+        set_timeout: int | None = None,
         salon: discord.TextChannel | None = None,
     ) -> None:
         # validations avant d'accuser réception
@@ -105,13 +106,13 @@ class Polls(commands.Cog):
             )
             return
 
-        if timeout is not None:
-            if timeout <= 0:
+        if set_timeout is not None:
+            if set_timeout <= 0:
                 await interaction.response.send_message(
                     "⚠️ La durée doit être strictement positive.", ephemeral=True
                 )
                 return
-            if timeout > MAX_TIMEOUT_MINUTES:
+            if set_timeout > MAX_TIMEOUT_MINUTES:
                 await interaction.response.send_message(
                     "⚠️ La durée maximale d'un sondage est de 7 jours (10080 minutes).",
                     ephemeral=True,
@@ -167,13 +168,13 @@ class Polls(commands.Cog):
                     return
 
         end_time = None
-        if timeout is not None:
-            end_time = discord.utils.utcnow() + timedelta(minutes=timeout)
+        if set_timeout is not None:
+            end_time = discord.utils.utcnow() + timedelta(minutes=set_timeout)
 
         embed = discord.Embed(title=question, color=discord.Color.blurple())
         description_lines = []
-        for emoji, choice_text in zip(NUMBER_EMOJIS, cleaned_choices):
-            description_lines.append(f"{emoji} **{choice_text}**")
+        for index, choice_text in enumerate(cleaned_choices, start=1):
+            description_lines.append(f"{index} {choice_text}")
         embed.description = "\n".join(description_lines)
         footer_parts = [f"Sondage créé par {interaction.user.display_name}"]
         if end_time is not None:
@@ -183,32 +184,34 @@ class Polls(commands.Cog):
             embed.timestamp = end_time
         embed.set_footer(text=" • ".join(footer_parts))
 
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
         try:
-            if target_channel == interaction.channel and not interaction.response.is_done():
-                await interaction.response.send_message(embed=embed)
-                poll_message = await interaction.original_response()
-            else:
-                if not interaction.response.is_done():
-                    await interaction.response.defer(ephemeral=True)
-                poll_message = await target_channel.send(embed=embed)
+            poll_message = await target_channel.send(embed=embed)
             for emoji, _ in zip(NUMBER_EMOJIS, cleaned_choices):
                 await poll_message.add_reaction(emoji)
         except Exception as exc:  # pragma: no cover - dépend de l'API Discord
-            if interaction.response.is_done():
-                await interaction.followup.send(
-                    f"⚠️ Impossible de publier le sondage : {exc}", ephemeral=True
-                )
-            else:
-                await interaction.response.send_message(
-                    f"⚠️ Impossible de publier le sondage : {exc}", ephemeral=True
-                )
+            await interaction.followup.send(
+                f"⚠️ Impossible de publier le sondage : {exc}", ephemeral=True
+            )
             return
 
-        if target_channel != interaction.channel:
-            await interaction.followup.send(
-                f"✅ Sondage publié dans {target_channel.mention} : {poll_message.jump_url}",
-                ephemeral=True,
-            )
+        summary_parts = [f"✅ Sondage publié dans {target_channel.mention}"]
+        if end_time is not None:
+            formatted_end = discord.utils.format_dt(end_time, style="f")
+            relative_end = discord.utils.format_dt(end_time, style="R")
+            summary_parts.append(f"Fin {formatted_end} ({relative_end})")
+        else:
+            summary_parts.append("Durée illimitée")
+
+        if set_timeout is not None:
+            summary_parts.append(f"setTimeOut : {set_timeout} minute(s)")
+
+        await interaction.followup.send(
+            " • ".join(summary_parts) + f"\n{poll_message.jump_url}",
+            ephemeral=True,
+        )
 
 
 async def setup(bot: commands.Bot) -> None:
