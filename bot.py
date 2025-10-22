@@ -1,10 +1,19 @@
 # bot.py
+from config import BOT_TOKEN, INTENTS, GUILD_ID
 import logging
 import discord
 from discord.ext import commands
-from config import BOT_TOKEN, INTENTS, GUILD_ID  # <- mets ton GUILD_ID dans config.py
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(name)s: %(message)s")
+import os
+BOT_TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise RuntimeError("Missing DISCORD_TOKEN/BOT_TOKEN in environment")
+
+
+# <- mets ton GUILD_ID dans config.py
+
+logging.basicConfig(level=logging.INFO,
+                    format="[%(levelname)s] %(name)s: %(message)s")
 
 INITIAL_EXTENSIONS = [
     "cogs.voice_manager",
@@ -14,7 +23,9 @@ INITIAL_EXTENSIONS = [
     "cogs.polls",
     "cogs.admin",
     "cogs.reaction_roles_wizard",
+    "cogs.invite",
 ]
+
 
 class MyBot(commands.Bot):
     async def setup_hook(self):
@@ -31,7 +42,8 @@ class MyBot(commands.Bot):
             if GUILD_ID:
                 guild = discord.Object(id=GUILD_ID)
                 self.tree.copy_global_to(guild=guild)  # optionnel
-                await self.tree.sync(guild=guild)      # ⭐ instantané sur ce serveur
+                # ⭐ instantané sur ce serveur
+                await self.tree.sync(guild=guild)
                 print(f"✅ Slash commands synchronisées sur guild {GUILD_ID}")
             else:
                 await self.tree.sync()                 # global (peut prendre du temps)
@@ -39,7 +51,9 @@ class MyBot(commands.Bot):
         except Exception as e:
             print(f"⚠️ Sync slash échouée: {e}")
 
+
 bot = MyBot(command_prefix="!", intents=INTENTS, allowed_mentions=None)
+
 
 @bot.event
 async def on_ready():
