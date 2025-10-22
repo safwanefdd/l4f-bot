@@ -34,6 +34,7 @@ INITIAL_EXTENSIONS: list[str] = [
     "cogs.reaction_roles_wizard",
     "cogs.invite",
     "cogs.moderation",
+    "cogs.sync",
 ]
 
 # ─────────────────────────────────────────────────────────
