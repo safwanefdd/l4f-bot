@@ -1,21 +1,64 @@
-# bot.py
-from config import BOT_TOKEN, INTENTS, GUILD_ID
+# -*- coding: utf-8 -*-
+# config.py
+import os
 import logging
 import discord
-from discord.ext import commands
+from dotenv import load_dotenv
 
-import os
+# Charge .env si présent (DISCORD_TOKEN, GUILD_ID, etc.)
+load_dotenv()
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Token & IDs
+# ──────────────────────────────────────────────────────────────────────────────
 BOT_TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise RuntimeError("Missing DISCORD_TOKEN/BOT_TOKEN in environment")
+    raise RuntimeError(
+        "❌ BOT_TOKEN manquant (définis DISCORD_TOKEN ou BOT_TOKEN dans ton environnement)")
 
 
-# <- mets ton GUILD_ID dans config.py
+def _parse_int(name: str) -> int | None:
+    raw = os.getenv(name)
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        raise RuntimeError(f"❌ {name} n’est pas un entier valide : {raw!r}")
 
-logging.basicConfig(level=logging.INFO,
-                    format="[%(levelname)s] %(name)s: %(message)s")
 
-INITIAL_EXTENSIONS = [
+# pour sync instantanée des slash
+GUILD_ID: int | None = _parse_int("GUILD_ID")
+OWNER_ID: int | None = _parse_int("OWNER_ID")     # (optionnel)
+
+# Salon SIGNALEMENT lu directement par le cog moderation via os.getenv("SIGNALEMENT_CHANNEL_ID")
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Intents
+# ──────────────────────────────────────────────────────────────────────────────
+INTENTS = discord.Intents.default()
+INTENTS.guilds = True
+# utile si tu manipules les rôles / welcome / stats
+INTENTS.members = True
+# nécessaire pour lire le contenu des MP (contestation)
+INTENTS.message_content = True
+INTENTS.dm_messages = True             # DM pour recevoir la contestation
+
+# ⚠️ Pense à activer "MESSAGE CONTENT INTENT" dans le Developer Portal si ce n’est pas déjà le cas.
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Logs
+# ──────────────────────────────────────────────────────────────────────────────
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="[%(levelname)s] %(name)s: %(message)s"
+)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Extensions (cogs) à charger
+# ──────────────────────────────────────────────────────────────────────────────
+INITIAL_EXTENSIONS: list[str] = [
     "cogs.voice_manager",
     "cogs.panel",
     "cogs.welcome",
@@ -24,42 +67,5 @@ INITIAL_EXTENSIONS = [
     "cogs.admin",
     "cogs.reaction_roles_wizard",
     "cogs.invite",
+    "cogs.moderation",
 ]
-
-
-class MyBot(commands.Bot):
-    async def setup_hook(self):
-        # charge tous les cogs
-        for ext in INITIAL_EXTENSIONS:
-            try:
-                await self.load_extension(ext)
-                print(f"📦 Chargé : {ext}")
-            except Exception as e:
-                print(f"⚠️ Erreur chargement {ext}: {e}")
-
-        # SYNC des slash commands (immédiate si guild spécifié)
-        try:
-            if GUILD_ID:
-                guild = discord.Object(id=GUILD_ID)
-                self.tree.copy_global_to(guild=guild)  # optionnel
-                # ⭐ instantané sur ce serveur
-                await self.tree.sync(guild=guild)
-                print(f"✅ Slash commands synchronisées sur guild {GUILD_ID}")
-            else:
-                await self.tree.sync()                 # global (peut prendre du temps)
-                print("✅ Slash commands synchronisées (global)")
-        except Exception as e:
-            print(f"⚠️ Sync slash échouée: {e}")
-
-
-bot = MyBot(command_prefix="!", intents=INTENTS, allowed_mentions=None)
-
-
-@bot.event
-async def on_ready():
-    print(f"🚀 Connecté comme {bot.user} ({bot.user.id})")
-
-if __name__ == "__main__":
-    if not BOT_TOKEN:
-        raise SystemExit("⚠️ BOT_TOKEN manquant.")
-    bot.run(BOT_TOKEN)
