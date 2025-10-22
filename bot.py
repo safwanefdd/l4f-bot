@@ -1,63 +1,29 @@
 # -*- coding: utf-8 -*-
-# config.py
-import os
+# bot.py
 import logging
+import sys
 import discord
-from dotenv import load_dotenv
+from discord.ext import commands
 
-# Charge .env si présent (DISCORD_TOKEN, GUILD_ID, etc.)
-load_dotenv()
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Token & IDs
-# ──────────────────────────────────────────────────────────────────────────────
-BOT_TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise RuntimeError(
-        "❌ BOT_TOKEN manquant (définis DISCORD_TOKEN ou BOT_TOKEN dans ton environnement)")
-
-
-def _parse_int(name: str) -> int | None:
-    raw = os.getenv(name)
-    if not raw:
-        return None
-    try:
-        return int(raw)
-    except ValueError:
-        raise RuntimeError(f"❌ {name} n’est pas un entier valide : {raw!r}")
-
-
-# pour sync instantanée des slash
-GUILD_ID: int | None = _parse_int("GUILD_ID")
-OWNER_ID: int | None = _parse_int("OWNER_ID")     # (optionnel)
-
-# Salon SIGNALEMENT lu directement par le cog moderation via os.getenv("SIGNALEMENT_CHANNEL_ID")
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Intents
-# ──────────────────────────────────────────────────────────────────────────────
-INTENTS = discord.Intents.default()
-INTENTS.guilds = True
-# utile si tu manipules les rôles / welcome / stats
-INTENTS.members = True
-# nécessaire pour lire le contenu des MP (contestation)
-INTENTS.message_content = True
-INTENTS.dm_messages = True             # DM pour recevoir la contestation
-
-# ⚠️ Pense à activer "MESSAGE CONTENT INTENT" dans le Developer Portal si ce n’est pas déjà le cas.
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Logs
-# ──────────────────────────────────────────────────────────────────────────────
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="[%(levelname)s] %(name)s: %(message)s"
+from config import (
+    BOT_TOKEN,
+    INTENTS,
+    GUILD_ID,
 )
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Extensions (cogs) à charger
-# ──────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────
+# Logging
+# ─────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(levelname)s] %(name)s: %(message)s",
+    stream=sys.stdout,
+)
+log = logging.getLogger("bot")
+
+# ─────────────────────────────────────────────────────────
+# Cogs à charger
+# ─────────────────────────────────────────────────────────
 INITIAL_EXTENSIONS: list[str] = [
     "cogs.voice_manager",
     "cogs.panel",
@@ -69,3 +35,70 @@ INITIAL_EXTENSIONS: list[str] = [
     "cogs.invite",
     "cogs.moderation",
 ]
+
+# ─────────────────────────────────────────────────────────
+# Bot class
+# ─────────────────────────────────────────────────────────
+
+
+class MyBot(commands.Bot):
+    def __init__(self) -> None:
+        super().__init__(
+            command_prefix="!",
+            intents=INTENTS,
+            # évite @everyone/@here accidentels
+            allowed_mentions=discord.AllowedMentions.none(),
+            # (optionnel) on masque le help texte si tu as un /help
+            help_command=None,
+        )
+
+    async def setup_hook(self) -> None:
+        # 1) Charger les cogs
+        for ext in INITIAL_EXTENSIONS:
+            try:
+                await self.load_extension(ext)
+                log.info(f"📦 Chargé : {ext}")
+            except Exception:
+                log.exception(f"⚠️ Erreur chargement {ext}")
+
+        # 2) Sync des slash commands
+        try:
+            if GUILD_ID:
+                guild_obj = discord.Object(id=GUILD_ID)
+                # Si tu veux dupliquer des globales vers la guilde, décommente la ligne suivante :
+                # self.tree.copy_global_to(guild=guild_obj)
+                # ⭐ instantané sur ta guilde
+                await self.tree.sync(guild=guild_obj)
+                log.info(
+                    f"✅ Slash commands synchronisées sur guild {GUILD_ID}")
+            else:
+                await self.tree.sync()  # Global (peut mettre jusqu’à ~1h la 1re fois)
+                log.info("✅ Slash commands synchronisées (global)")
+        except Exception:
+            log.exception("⚠️ Échec de synchronisation des slash commands")
+
+    async def on_ready(self) -> None:
+        u = self.user
+        if u is None:
+            return
+        log.info(
+            "🚀 Connecté comme %s (%s) • guilds=%d • intents.message_content=%s",
+            u, u.id, len(self.guilds), self.intents.message_content
+        )
+
+# ─────────────────────────────────────────────────────────
+# Entrée
+# ─────────────────────────────────────────────────────────
+
+
+def main() -> None:
+    if not BOT_TOKEN:
+        raise SystemExit(
+            "❌ BOT_TOKEN manquant (définis DISCORD_TOKEN ou BOT_TOKEN dans ton environnement).")
+    bot = MyBot()
+    # On laisse discord.py gérer ses propres logs via notre config
+    bot.run(BOT_TOKEN, log_handler=None)
+
+
+if __name__ == "__main__":
+    main()
