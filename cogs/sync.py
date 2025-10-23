@@ -31,5 +31,7 @@ class SyncCog(commands.Cog):
         await interaction.response.send_message(f"🌍 {len(synced)} commandes globales synchronisées.", ephemeral=True)
 
 
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+@app_commands.command(name="panel", description="Ouvre ton panneau de contrôle vocal")
 async def setup(bot: commands.Bot):
     await bot.add_cog(SyncCog(bot))

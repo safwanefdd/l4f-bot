@@ -1,4 +1,5 @@
 from __future__ import annotations
+from config import GUILD_ID
 
 import asyncio
 import contextlib
@@ -700,5 +701,7 @@ class Polls(commands.Cog):
         )
 
 
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+@app_commands.command(name="panel", description="Ouvre ton panneau de contrôle vocal")
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(Polls(bot))

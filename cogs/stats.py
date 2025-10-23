@@ -1,4 +1,5 @@
 # cogs/stats.py
+from config import GUILD_ID
 import os
 import sqlite3
 import asyncio
@@ -33,7 +34,8 @@ def ensure_db():
         )
         """)
         # vue/indice utile
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_playtime_guild_game ON playtime (guild_id, game)")
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_playtime_guild_game ON playtime (guild_id, game)")
         con.commit()
 
 
@@ -99,7 +101,8 @@ class Stats(commands.Cog):
         guild_id = after.guild.id
         now = datetime.now(timezone.utc)
 
-        before_game = get_game(before) if isinstance(before, discord.Member) else None
+        before_game = get_game(before) if isinstance(
+            before, discord.Member) else None
         after_game = get_game(after)
 
         # cas 1: même jeu -> rien
@@ -196,7 +199,8 @@ class Stats(commands.Cog):
             await interaction.followup.send("Pas encore de stats pour toi. Lance un jeu 🎮", ephemeral=True)
             return
 
-        desc = "\n".join(f"• **{game}** — {fmt_dur(sec)}" for game, sec in rows) + add_line
+        desc = "\n".join(
+            f"• **{game}** — {fmt_dur(sec)}" for game, sec in rows) + add_line
         embed = discord.Embed(
             title=f"📊 Stats de {interaction.user.display_name}",
             description=desc.strip(),
@@ -244,7 +248,8 @@ class Stats(commands.Cog):
 
         with sqlite3.connect(DB_PATH) as con:
             cur = con.cursor()
-            cur.execute("DELETE FROM playtime WHERE guild_id = ?", (interaction.guild_id,))
+            cur.execute("DELETE FROM playtime WHERE guild_id = ?",
+                        (interaction.guild_id,))
             con.commit()
 
         # on vide les sessions en cours des membres de ce serveur
@@ -267,5 +272,7 @@ class Stats(commands.Cog):
             pass
 
 
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+@app_commands.command(name="panel", description="Ouvre ton panneau de contrôle vocal")
 async def setup(bot: commands.Bot):
     await bot.add_cog(Stats(bot))

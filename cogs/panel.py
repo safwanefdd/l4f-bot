@@ -1,4 +1,5 @@
 # cogs/panel.py
+from config import GUILD_ID
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -9,7 +10,8 @@ from cogs.utils import control_embed
 
 class RenameModal(discord.ui.Modal, title="Renommer le salon"):
     """Fenêtre de renommage du salon (modale Discord)."""
-    new_name = discord.ui.TextInput(label="Nouveau nom", placeholder="🎮 Salon de Nathalie", max_length=96)
+    new_name = discord.ui.TextInput(
+        label="Nouveau nom", placeholder="🎮 Salon de Nathalie", max_length=96)
 
     def __init__(self, channel_id: int, owner_id: int):
         super().__init__()
@@ -32,6 +34,7 @@ class RenameModal(discord.ui.Modal, title="Renommer le salon"):
 
 class VCPanel(discord.ui.View):
     """Vue contenant les boutons du panneau de contrôle."""
+
     def __init__(self, owner_id: int, channel_id: int):
         super().__init__(timeout=None)  # timeout=None => persistant
         self.owner_id = owner_id
@@ -50,7 +53,8 @@ class VCPanel(discord.ui.View):
     # === BOUTONS ===
     @discord.ui.button(label="🔒 Verrouiller", style=discord.ButtonStyle.secondary, custom_id="vc:lock")
     async def lock(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self.ensure_owner(interaction): return
+        if not await self.ensure_owner(interaction):
+            return
         ch = await self.get_channel(interaction)
         if ch:
             await ch.set_permissions(interaction.guild.default_role, connect=False)
@@ -58,7 +62,8 @@ class VCPanel(discord.ui.View):
 
     @discord.ui.button(label="🔓 Déverrouiller", style=discord.ButtonStyle.secondary, custom_id="vc:unlock")
     async def unlock(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self.ensure_owner(interaction): return
+        if not await self.ensure_owner(interaction):
+            return
         ch = await self.get_channel(interaction)
         if ch:
             await ch.set_permissions(interaction.guild.default_role, connect=True)
@@ -66,7 +71,8 @@ class VCPanel(discord.ui.View):
 
     @discord.ui.button(label="➕ Slots", style=discord.ButtonStyle.primary, custom_id="vc:addslot")
     async def add_slot(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self.ensure_owner(interaction): return
+        if not await self.ensure_owner(interaction):
+            return
         ch = await self.get_channel(interaction)
         if ch:
             limit = ch.user_limit or len(ch.members)
@@ -76,7 +82,8 @@ class VCPanel(discord.ui.View):
 
     @discord.ui.button(label="➖ Slots", style=discord.ButtonStyle.primary, custom_id="vc:subslot")
     async def sub_slot(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self.ensure_owner(interaction): return
+        if not await self.ensure_owner(interaction):
+            return
         ch = await self.get_channel(interaction)
         if ch:
             limit = ch.user_limit or len(ch.members)
@@ -86,12 +93,14 @@ class VCPanel(discord.ui.View):
 
     @discord.ui.button(label="✏️ Renommer", style=discord.ButtonStyle.success, custom_id="vc:rename")
     async def rename(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self.ensure_owner(interaction): return
+        if not await self.ensure_owner(interaction):
+            return
         await interaction.response.send_modal(RenameModal(self.channel_id, self.owner_id))
 
 
 class Panel(commands.Cog):
     """Commande slash /panel pour gérer son salon vocal."""
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
@@ -114,5 +123,7 @@ class Panel(commands.Cog):
         )
 
 
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+@app_commands.command(name="panel", description="Ouvre ton panneau de contrôle vocal")
 async def setup(bot):
     await bot.add_cog(Panel(bot))

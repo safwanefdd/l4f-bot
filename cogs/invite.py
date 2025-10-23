@@ -1,4 +1,5 @@
 # cogs/invite.py
+from config import GUILD_ID
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -76,5 +77,7 @@ class Invite(commands.Cog):
         )
 
 
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+@app_commands.command(name="panel", description="Ouvre ton panneau de contrôle vocal")
 async def setup(bot: commands.Bot):
     await bot.add_cog(Invite(bot))

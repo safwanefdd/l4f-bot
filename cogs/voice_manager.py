@@ -1,3 +1,4 @@
+from config import GUILD_ID
 from discord.ext import commands
 import discord
 import asyncio
@@ -6,6 +7,7 @@ from cogs.utils import build_channel_name
 
 owner_to_voice = {}
 voice_to_owner = {}
+
 
 class VoiceManager(commands.Cog):
     def __init__(self, bot):
@@ -48,5 +50,8 @@ class VoiceManager(commands.Cog):
                 if removed_owner_id is not None:
                     owner_to_voice.pop(removed_owner_id, None)
 
+
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+@app_commands.command(name="panel", description="Ouvre ton panneau de contrôle vocal")
 async def setup(bot):
     await bot.add_cog(VoiceManager(bot))
