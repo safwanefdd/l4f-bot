@@ -31,14 +31,34 @@ class AppealView(discord.ui.View):
         self.token = token
 
     @discord.ui.button(label="Contester mon bannissement", style=discord.ButtonStyle.primary)
-    async def appeal_open(self, interaction: discord.Interaction, _: discord.ui.Button):  # <<< ASYNC
+    async def appeal_open(self, interaction: discord.Interaction, _: discord.ui.Button):
+        # 1) Toujours ACCUSER RÉCEPTION rapidement (en DM pas d'éphémère)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.defer()  # OK en DM, évite "échec de l'interaction"
+        except Exception:
+            pass
+
+        # 2) Ouvrir la fenêtre de contestation
         ACTIVE_APPEALS[interaction.user.id] = (
             self.token, _now() + APPEAL_WINDOW_SECONDS)
-        await interaction.response.send_message(
-            f"📝 Écris **ta contestation** dans ce MP (tu peux joindre audio/vidéo/images). "
-            f"Tu as **{APPEAL_WINDOW_SECONDS//60} minutes**. Envoie **un seul message** avec tout.",
-            ephemeral=True
+
+        # 3) Donner les consignes dans le même DM (pas d'ephemeral en MP)
+        text = (
+            f"📝 **Contestation ouverte !**\n\n"
+            f"Explique calmement ta situation et joins, si besoin, **audio/vidéo/images**.\n"
+            f"Tu as **{APPEAL_WINDOW_SECONDS//60} minutes**.\n\n"
+            f"➡️ Envoie **un seul message** ici avec ton explication et tes pièces jointes."
         )
+        # Priorité: followup dans le même fil DM; sinon fallback en user.send()
+        try:
+            await interaction.followup.send(text)
+        except Exception:
+            try:
+                await interaction.user.send(text)
+            except Exception:
+                # rien de plus à faire : l'utilisateur a fermé ses MP
+                pass
 
 
 class Moderation(commands.Cog):
