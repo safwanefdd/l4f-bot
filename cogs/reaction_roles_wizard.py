@@ -6,6 +6,8 @@ import re
 import discord
 from discord.ext import commands
 from discord import app_commands
+from config import GUILD_ID
+
 
 DB_PATH = os.path.join("data", "reaction_roles.json")
 
@@ -252,6 +254,14 @@ class ReactionRolesWizard(commands.Cog):
         description="Texte sous le titre (optionnel)"
     )
     @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.describe(
+        canal="Salon où publier le message",
+        titre="Titre de l’embed (ex: Choisis tes jeux)",
+        description="Texte sous le titre (optionnel)"
+    )
+    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    @app_commands.command(name="creer-rr", description="Créer un Reaction Roles à partir des rôles (emoji lu au début du nom).")
     async def creer_rr(self, interaction: discord.Interaction, canal: discord.TextChannel, titre: str, description: str | None = None):
         view = RolePickView(interaction.user.id, canal,
                             titre, description or "")

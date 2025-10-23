@@ -5,6 +5,7 @@ from discord import app_commands
 from typing import Optional
 from cogs.voice_manager import owner_to_voice
 from cogs.utils import control_embed
+from config import GUILD_ID
 
 
 class RenameModal(discord.ui.Modal, title="Renommer le salon"):
@@ -103,6 +104,8 @@ class Panel(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    @app_commands.command(name="panel", description="Ouvre ton panneau de contrôle vocal")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.command(name="panel", description="Ouvre ton panneau de contrôle vocal")
     async def panel(self, interaction: discord.Interaction):
         owner_ch_id = owner_to_voice.get(interaction.user.id)

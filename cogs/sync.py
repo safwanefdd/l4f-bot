@@ -3,6 +3,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from config import GUILD_ID
+from config import GUILD_ID
 
 GUILD_OBJ = discord.Object(id=GUILD_ID) if GUILD_ID else None
 
@@ -26,6 +27,7 @@ class SyncCog(commands.Cog):
     # /resync_global — rare, à utiliser seulement si nécessaire
     @app_commands.command(name="resync_global", description="Synchronise globalement (lent).")
     @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
     async def resync_global(self, interaction: discord.Interaction):
         synced = await self.bot.tree.sync()
         await interaction.response.send_message(f"🌍 {len(synced)} commandes globales synchronisées.", ephemeral=True)

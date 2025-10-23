@@ -2,6 +2,8 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
+from config import GUILD_ID
+
 
 INVITE_MAX_AGE = 60 * 60       # 1 heure
 INVITE_MAX_USES = 1            # une seule utilisation
@@ -18,6 +20,8 @@ class Invite(commands.Cog):
         description="Invite quelqu’un en MP à rejoindre ton salon vocal actuel."
     )
     @app_commands.describe(user="Utilisateur à inviter (reçoit un MP avec le lien)")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    @app_commands.command(name="invite")
     async def invite(self, interaction: discord.Interaction, user: discord.User):
         member = interaction.user
         voice_state = getattr(member, "voice", None)

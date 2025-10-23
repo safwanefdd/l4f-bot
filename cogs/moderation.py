@@ -8,6 +8,7 @@ import asyncio
 import discord
 from discord import app_commands
 from discord.ext import commands
+from config import GUILD_ID
 
 # ---------- CONFIG ----------
 # Mets l'ID du salon où recevoir les contestations (ou via .env)
@@ -87,6 +88,8 @@ class Moderation(commands.Cog):
         notify="Tenter d'envoyer un MP avant le ban (oui par défaut).",
         allow_appeal="Proposer la contestation par MP (oui par défaut)."
     )
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    @app_commands.command(name="ban")
     async def ban(
         self,
         interaction: discord.Interaction,

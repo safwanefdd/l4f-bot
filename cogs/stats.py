@@ -10,6 +10,9 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands, ActivityType
 
+from config import GUILD_ID
+
+
 DB_PATH = os.path.join("data", "stats.db")
 
 logger = logging.getLogger(__name__)
@@ -240,6 +243,8 @@ class Stats(commands.Cog):
 
     @app_commands.command(name="reset-stats", description="(Admin) Réinitialiser toutes les stats du serveur")
     @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    @app_commands.command(name="reset-stats", description="(Admin) Réinitialiser toutes les stats du serveur")
     async def reset_stats(self, interaction: discord.Interaction, confirmation: bool):
         if not confirmation:
             await interaction.response.send_message("❌ Annulé. Passe `confirmation: true` pour confirmer.", ephemeral=True)

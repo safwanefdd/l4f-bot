@@ -3,6 +3,7 @@ import discord
 import asyncio
 from config import HUB_CHANNEL_ID, CATEGORY_ID, NAME_PREFIX
 from cogs.utils import build_channel_name
+from config import GUILD_ID
 
 owner_to_voice = {}
 voice_to_owner = {}
@@ -13,6 +14,8 @@ class VoiceManager(commands.Cog):
         self.bot = bot
 
     @commands.Cog.listener()
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    @app_commands.command(name="voice")  # ex. "invite", "ban", "panel"
     async def on_voice_state_update(self, member, before, after):
         if not member or member.bot:
             return

@@ -66,20 +66,19 @@ async def setup_hook(self) -> None:
             log.exception(f"⚠️ Erreur chargement {ext}")
 
     # 2) Resync forcé sur ta guilde et LOG des commandes vues par Discord
+
     try:
         if GUILD_ID:
             guild = discord.Object(id=GUILD_ID)
-            # on nettoie puis on resynchronise
             self.tree.clear_commands(guild=guild)
             synced = await self.tree.sync(guild=guild)
+            names = [c.name for c in synced]
             log.info(
-                f"✅ Resync guild {GUILD_ID} → {len(synced)} commandes : {[c.name for c in synced]}")
-            # (optionnel) purge globale pour éviter des doublons fantômes
-            # self.tree.clear_commands() ; await self.tree.sync()
+                f"✅ Resync guild {GUILD_ID} → {len(synced)} commandes : {names}")
         else:
             synced = await self.tree.sync()
-            log.info(
-                f"🌍 Resync global → {len(synced)} commandes : {[c.name for c in synced]}")
+            names = [c.name for c in synced]
+            log.info(f"🌍 Resync global → {len(synced)} commandes : {names}")
     except Exception:
         log.exception("⚠️ Échec de synchronisation des slash")
 

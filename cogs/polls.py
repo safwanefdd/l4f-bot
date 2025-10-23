@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import discord
 from discord import app_commands
 from discord.ext import commands
+from config import GUILD_ID
 
 # =========================
 #           CONFIG
@@ -684,6 +685,8 @@ class Polls(commands.Cog):
 
     # ------------------------------ Commande ----------------------------- #
 
+    @app_commands.command(name="sondage", description="Assistant de création (salon, mode, nombre de choix)")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.command(name="sondage", description="Assistant de création (salon, mode, nombre de choix)")
     async def sondage(self, interaction: discord.Interaction):
         if interaction.guild is None:
