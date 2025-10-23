@@ -1,5 +1,4 @@
 # cogs/panel.py
-from config import GUILD_ID
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -123,7 +122,5 @@ class Panel(commands.Cog):
         )
 
 
-@app_commands.guilds(discord.Object(id=GUILD_ID))
-@app_commands.command(name="panel", description="Ouvre ton panneau de contrôle vocal")
 async def setup(bot):
     await bot.add_cog(Panel(bot))

@@ -1,5 +1,4 @@
 # cogs/reaction_roles_wizard.py
-from config import GUILD_ID
 import asyncio
 import os
 import json
@@ -262,7 +261,5 @@ class ReactionRolesWizard(commands.Cog):
         )
 
 
-@app_commands.guilds(discord.Object(id=GUILD_ID))
-@app_commands.command(name="panel", description="Ouvre ton panneau de contrôle vocal")
 async def setup(bot: commands.Bot):
     await bot.add_cog(ReactionRolesWizard(bot))

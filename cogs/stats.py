@@ -1,5 +1,4 @@
 # cogs/stats.py
-from config import GUILD_ID
 import os
 import sqlite3
 import asyncio
@@ -272,7 +271,5 @@ class Stats(commands.Cog):
             pass
 
 
-@app_commands.guilds(discord.Object(id=GUILD_ID))
-@app_commands.command(name="panel", description="Ouvre ton panneau de contrôle vocal")
 async def setup(bot: commands.Bot):
     await bot.add_cog(Stats(bot))

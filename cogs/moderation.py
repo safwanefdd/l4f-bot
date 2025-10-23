@@ -1,6 +1,5 @@
 # cogs/moderation.py
 # -*- coding: utf-8 -*-
-from config import GUILD_ID
 import os
 import time
 import uuid
@@ -254,7 +253,5 @@ class Moderation(commands.Cog):
         await interaction.response.send_message(f"⚠️ Erreur : {error}", ephemeral=True)
 
 
-@app_commands.guilds(discord.Object(id=GUILD_ID))
-@app_commands.command(name="panel", description="Ouvre ton panneau de contrôle vocal")
 async def setup(bot: commands.Bot):
     await bot.add_cog(Moderation(bot))

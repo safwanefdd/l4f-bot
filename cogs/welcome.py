@@ -1,4 +1,3 @@
-from config import GUILD_ID
 from discord.ext import commands
 import discord
 from config import WELCOME_CHANNEL_ID, WELCOME_ROLE_ID, SEND_WELCOME_DM
@@ -36,7 +35,5 @@ class Welcome(commands.Cog):
                 pass
 
 
-@app_commands.guilds(discord.Object(id=GUILD_ID))
-@app_commands.command(name="panel", description="Ouvre ton panneau de contrôle vocal")
 async def setup(bot):
     await bot.add_cog(Welcome(bot))

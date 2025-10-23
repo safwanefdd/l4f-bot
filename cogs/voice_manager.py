@@ -1,4 +1,3 @@
-from config import GUILD_ID
 from discord.ext import commands
 import discord
 import asyncio
@@ -51,7 +50,5 @@ class VoiceManager(commands.Cog):
                     owner_to_voice.pop(removed_owner_id, None)
 
 
-@app_commands.guilds(discord.Object(id=GUILD_ID))
-@app_commands.command(name="panel", description="Ouvre ton panneau de contrôle vocal")
 async def setup(bot):
     await bot.add_cog(VoiceManager(bot))
