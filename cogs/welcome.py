@@ -9,8 +9,6 @@ class Welcome(commands.Cog):
         self.bot = bot
 
     @commands.Cog.listener()
-    @app_commands.guilds(discord.Object(id=GUILD_ID))
-    @app_commands.command(name="welcome")  # ex. "invite", "ban", "panel"
     async def on_member_join(self, member: discord.Member):
         # Rôle auto
         if WELCOME_ROLE_ID:

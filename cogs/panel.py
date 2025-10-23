@@ -104,7 +104,6 @@ class Panel(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="panel", description="Ouvre ton panneau de contrôle vocal")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.command(name="panel", description="Ouvre ton panneau de contrôle vocal")
     async def panel(self, interaction: discord.Interaction):

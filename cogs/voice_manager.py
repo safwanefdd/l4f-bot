@@ -14,8 +14,6 @@ class VoiceManager(commands.Cog):
         self.bot = bot
 
     @commands.Cog.listener()
-    @app_commands.guilds(discord.Object(id=GUILD_ID))
-    @app_commands.command(name="voice")  # ex. "invite", "ban", "panel"
     async def on_voice_state_update(self, member, before, after):
         if not member or member.bot:
             return

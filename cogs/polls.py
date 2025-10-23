@@ -685,7 +685,6 @@ class Polls(commands.Cog):
 
     # ------------------------------ Commande ----------------------------- #
 
-    @app_commands.command(name="sondage", description="Assistant de création (salon, mode, nombre de choix)")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.command(name="sondage", description="Assistant de création (salon, mode, nombre de choix)")
     async def sondage(self, interaction: discord.Interaction):
