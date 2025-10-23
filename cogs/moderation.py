@@ -9,9 +9,10 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from config import GUILD_ID
+from config import SIGNALEMENT_CHANNEL_ID
 
 GUILD_OBJ = discord.Object(id=GUILD_ID) if GUILD_ID else None
-SIGNALEMENT_CHANNEL_ID = int(os.getenv("SIGNALEMENT_CHANNEL_ID", "0"))
+SIGNALEMENT_CHANNEL_ID = SIGNALEMENT_CHANNEL_ID if SIGNALEMENT_CHANNEL_ID else 0
 
 APPEAL_WINDOW_SECONDS = 10 * 60
 APPEAL_MAX_ATTACHMENTS = 5

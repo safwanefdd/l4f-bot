@@ -43,6 +43,4 @@ SERVER_RULES_CHANNEL_ID = 1424371734705999993
 # Salon de signalement (pour recevoir les contestations)
 # ─────────────────────────────────────────────────────────
 # Définis SIGNALEMENT_CHANNEL_ID dans ton .env, ex:
-# SIGNALEMENT_CHANNEL_ID=123456789012345678
-SIGNALEMENT_CHANNEL_ID = int(
-    os.getenv("SIGNALEMENT_CHANNEL_ID", "0"))  # 0 = pas configuré
+SIGNALEMENT_CHANNEL_ID = 1424374659331129396
