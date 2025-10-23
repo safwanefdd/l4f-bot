@@ -4,28 +4,31 @@ from discord.ext import commands
 from discord import app_commands
 from config import GUILD_ID
 
+GUILD_OBJ = discord.Object(id=GUILD_ID) if GUILD_ID else None
+
 
 class SyncCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="sync", description="Resynchronise les slash commands sur la guilde.")
+    # /resync — resynchronise sur ta guilde uniquement
+    @app_commands.guilds(GUILD_OBJ)   # visibilité immédiate sur TA guilde
+    @app_commands.command(name="resync", description="Resynchronise les slash commands sur la guilde.")
     @app_commands.checks.has_permissions(administrator=True)
-    async def sync(self, interaction: discord.Interaction):
-        if not GUILD_ID:
-            await interaction.response.send_message("GUILD_ID manquant côté config.", ephemeral=True)
-            return
-        guild = discord.Object(id=GUILD_ID)
-        # On nettoie d’abord les commandes guild, puis on re-sync
-        self.bot.tree.clear_commands(guild=guild)
-        synced = await self.bot.tree.sync(guild=guild)
+    async def resync(self, interaction: discord.Interaction):
+        if not GUILD_OBJ:
+            return await interaction.response.send_message("GUILD_ID manquant côté config.", ephemeral=True)
+        # on nettoie puis on resync
+        self.bot.tree.clear_commands(guild=GUILD_OBJ)
+        synced = await self.bot.tree.sync(guild=GUILD_OBJ)
         await interaction.response.send_message(f"✅ {len(synced)} commandes synchronisées sur la guilde.", ephemeral=True)
 
-    @app_commands.command(name="sync-global", description="(rare) Sync global (peut prendre du temps).")
+    # /resync_global — rare, à utiliser seulement si nécessaire
+    @app_commands.command(name="resync_global", description="Synchronise globalement (lent).")
     @app_commands.checks.has_permissions(administrator=True)
-    async def sync_global(self, interaction: discord.Interaction):
+    async def resync_global(self, interaction: discord.Interaction):
         synced = await self.bot.tree.sync()
-        await interaction.response.send_message(f"🌍 {len(synced)} commandes synchronisées globalement.", ephemeral=True)
+        await interaction.response.send_message(f"🌍 {len(synced)} commandes globales synchronisées.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
