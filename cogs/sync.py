@@ -19,8 +19,7 @@ class SyncCog(commands.Cog):
     async def resync(self, interaction: discord.Interaction):
         if not GUILD_OBJ:
             return await interaction.response.send_message("GUILD_ID manquant côté config.", ephemeral=True)
-        # on nettoie puis on resync
-        self.bot.tree.clear_commands(guild=GUILD_OBJ)
+        # on resync
         synced = await self.bot.tree.sync(guild=GUILD_OBJ)
         await interaction.response.send_message(f"✅ {len(synced)} commandes synchronisées sur la guilde.", ephemeral=True)
 

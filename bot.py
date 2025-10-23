@@ -70,15 +70,15 @@ async def setup_hook(self) -> None:
     try:
         if GUILD_ID:
             guild = discord.Object(id=GUILD_ID)
-            self.tree.clear_commands(guild=guild)
-            synced = await self.tree.sync(guild=guild)
+            # ❌ ne PAS faire: self.tree.clear_commands(guild=guild)
+            synced = await self.tree.sync(guild=guild)   # ← suffit
             names = [c.name for c in synced]
             log.info(
-                f"✅ Resync guild {GUILD_ID} → {len(synced)} commandes : {names}")
+                f"✅ Sync guild {GUILD_ID} → {len(synced)} commandes : {names}")
         else:
             synced = await self.tree.sync()
             names = [c.name for c in synced]
-            log.info(f"🌍 Resync global → {len(synced)} commandes : {names}")
+            log.info(f"🌍 Sync global → {len(synced)} commandes : {names}")
     except Exception:
         log.exception("⚠️ Échec de synchronisation des slash")
 
