@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # cogs/reaction_roles_wizard.py
 import asyncio
 import os
@@ -7,7 +8,6 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from config import GUILD_ID
-
 
 DB_PATH = os.path.join("data", "reaction_roles.json")
 
@@ -37,7 +37,6 @@ EMOJI_REGEX = re.compile(r"<a?:\w+:\d+>")
 
 
 def to_partial_emoji(s: str) -> discord.PartialEmoji | str:
-    """<:name:id> -> PartialEmoji, sinon retourne la string (unicode)."""
     s = s.strip()
     if EMOJI_REGEX.fullmatch(s):
         return discord.PartialEmoji.from_str(s)
@@ -45,18 +44,15 @@ def to_partial_emoji(s: str) -> discord.PartialEmoji | str:
 
 
 def sanitize_unicode_emoji(s: str) -> str:
-    """Retire variation selectors, ZWJ & co qui font échouer add_reaction."""
     INVIS = "\uFE0F\uFE0E\u200D\u200C\u200B\u2060\u00A0"
     return "".join(ch for ch in s if ch not in INVIS).strip()
 
 
 def emoji_from_role_name(name: str) -> str | None:
-    """Extrait l'emoji en tête du nom du rôle (avant espace / séparateur)."""
     if not name:
         return None
     head = name.strip().split()[0]
     head = head.strip("・-:|~•·")
-    # si c'est juste alphanum -> pas un emoji
     if all(ch.isalnum() or ch in "_-" for ch in head):
         return None
     return head or None
@@ -64,14 +60,9 @@ def emoji_from_role_name(name: str) -> str | None:
 
 async def pretest_emojis(bot: commands.Bot, channel: discord.TextChannel,
                          emoji_list: list[discord.PartialEmoji | str]) -> tuple[bool, list[str]]:
-    """
-    Essaie d'ajouter chaque emoji en réaction sur un message temporaire.
-    Retourne (ok, erreurs[]) ; supprime le message de test.
-    """
-    # permission check
     perms = channel.permissions_for(channel.guild.me)
     if not perms.add_reactions or not perms.read_message_history:
-        return False, ["Le bot n’a pas la permission **Ajouter des réactions** et/ou **Lire l’historique** dans ce salon."]
+        return False, ["Le bot n’a pas la permission **Ajouter des réactions** et/ou **Lire l’historique**."]
 
     tmp = await channel.send("⏳ Vérification des émojis… (message auto-supprimé)")
     errors = []
@@ -86,10 +77,6 @@ async def pretest_emojis(bot: commands.Bot, channel: discord.TextChannel,
     except Exception:
         pass
     return (len(errors) == 0, errors)
-
-# ------------- STATE -------------
-# non utilisé ici mais gardé si on étend plus tard
-_pending: dict[int, dict] = {}
 
 # ------------- VIEW -------------
 
@@ -114,12 +101,9 @@ class RolePickView(discord.ui.View):
         if not roles:
             return await interaction.response.send_message("❌ Sélectionne au moins un rôle.", ephemeral=True)
 
-        # ---- construit mapping + liste ordonnée d'emojis ----
         mapping: dict[str, int] = {}
         lines: list[str] = []
         emoji_for_react: list[discord.PartialEmoji | str] = []
-
-        # si l’emoji custom n’appartient pas au serveur, il faudra la permission 'external_emojis'
         perms = self.channel.permissions_for(self.channel.guild.me)
 
         for role in roles:
@@ -131,29 +115,22 @@ class RolePickView(discord.ui.View):
                 )
 
             obj = to_partial_emoji(emj_raw)
-            key: str
-            react_item: discord.PartialEmoji | str
-
             if isinstance(obj, discord.PartialEmoji) and obj.id:
-                # custom emoji
                 if not perms.external_emojis and not self.channel.guild.get_emoji(obj.id):
                     return await interaction.response.send_message(
-                        f"❌ L’emoji **{emj_raw}** est un emoji *custom* externe.\n"
-                        "Active la permission **Utiliser des émojis externes** pour le bot "
-                        "ou utilise un emoji de ce serveur / un emoji Unicode.",
+                        f"❌ L’emoji **{emj_raw}** est un emoji *custom* externe.",
                         ephemeral=True
                     )
-                key = str(obj)          # <:name:id>
+                key = str(obj)
                 react_item = obj
             else:
-                # unicode
                 uni = sanitize_unicode_emoji(str(obj))
                 key = uni
                 react_item = uni
 
             if key in mapping:
                 return await interaction.response.send_message(
-                    f"❌ L’emoji **{emj_raw}** est utilisé pour plusieurs rôles. Mets un emoji unique par rôle.",
+                    f"❌ L’emoji **{emj_raw}** est utilisé plusieurs fois.",
                     ephemeral=True
                 )
 
@@ -161,19 +138,14 @@ class RolePickView(discord.ui.View):
             emoji_for_react.append(react_item)
             lines.append(f"{emj_raw}  →  {role.mention}")
 
-        # ---- pré-test invisible (évite Unknown Emoji une fois l’embed envoyé) ----
         ok, errs = await pretest_emojis(interaction.client, self.channel, emoji_for_react)
         if not ok:
             bullet = "\n".join(f"• {e}" for e in errs[:10])
             return await interaction.response.send_message(
-                "❌ Certains émojis ne peuvent pas être utilisés comme réaction ici :\n"
-                f"{bullet}\n\n"
-                "👉 Utilise des **emojis Unicode** simples, ou importe les emojis custom sur ce serveur, "
-                "ou donne la permission **Utiliser des émojis externes** au bot.",
+                "❌ Certains émojis ne fonctionnent pas :\n" + bullet,
                 ephemeral=True
             )
 
-        # ---- envoi final ----
         embed = discord.Embed(
             title=self.title, description=self.desc, colour=discord.Colour.blurple())
         embed.add_field(name="Réagis pour obtenir le rôle :",
@@ -192,8 +164,7 @@ class RolePickView(discord.ui.View):
         save_db(db)
 
         await interaction.response.send_message(
-            f"✅ Reaction Roles créé dans {self.channel.mention} (ID `{msg.id}`)",
-            ephemeral=True
+            f"✅ Reaction Roles créé dans {self.channel.mention} (ID `{msg.id}`)", ephemeral=True
         )
         self.stop()
 
@@ -201,7 +172,7 @@ class RolePickView(discord.ui.View):
 
 
 class ReactionRolesWizard(commands.Cog):
-    """Assistant Reaction Roles : sélection de rôles -> emojis extraits -> pré-test -> post."""
+    """Assistant Reaction Roles."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -247,22 +218,19 @@ class ReactionRolesWizard(commands.Cog):
             except:
                 pass
 
-    @app_commands.command(name="creer-rr", description="Créer un Reaction Roles à partir des rôles (emoji lu au début du nom).")
-    @app_commands.describe(
-        canal="Salon où publier le message",
-        titre="Titre de l’embed (ex: Choisis tes jeux)",
-        description="Texte sous le titre (optionnel)"
-    )
-    @app_commands.checks.has_permissions(manage_guild=True)
-    @app_commands.describe(
-        canal="Salon où publier le message",
-        titre="Titre de l’embed (ex: Choisis tes jeux)",
-        description="Texte sous le titre (optionnel)"
-    )
-    @app_commands.checks.has_permissions(manage_guild=True)
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    @app_commands.command(name="creer-rr", description="Créer un Reaction Roles à partir des rôles (emoji lu au début du nom).")
-    async def creer_rr(self, interaction: discord.Interaction, canal: discord.TextChannel, titre: str, description: str | None = None):
+    @app_commands.command(
+        name="creer-rr",
+        description="Créer un Reaction Roles à partir des rôles (emoji lu au début du nom)."
+    )
+    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.describe(
+        canal="Salon où publier le message",
+        titre="Titre de l’embed (ex: Choisis tes jeux)",
+        description="Texte sous le titre (optionnel)"
+    )
+    async def creer_rr(self, interaction: discord.Interaction,
+                       canal: discord.TextChannel, titre: str, description: str | None = None):
         view = RolePickView(interaction.user.id, canal,
                             titre, description or "")
         await interaction.response.send_message(
