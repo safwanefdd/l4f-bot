@@ -53,30 +53,35 @@ class MyBot(commands.Bot):
             help_command=None,
         )
 
-    async def setup_hook(self) -> None:
-        # 1) Charger les cogs
-        for ext in INITIAL_EXTENSIONS:
-            try:
-                await self.load_extension(ext)
-                log.info(f"📦 Chargé : {ext}")
-            except Exception:
-                log.exception(f"⚠️ Erreur chargement {ext}")
+# bot.py (dans MyBot)
 
-        # 2) Sync des slash commands
+
+async def setup_hook(self) -> None:
+    # 1) Charge les cogs
+    for ext in INITIAL_EXTENSIONS:
         try:
-            if GUILD_ID:
-                guild_obj = discord.Object(id=GUILD_ID)
-                # Si tu veux dupliquer des globales vers la guilde, décommente la ligne suivante :
-                # self.tree.copy_global_to(guild=guild_obj)
-                # ⭐ instantané sur ta guilde
-                await self.tree.sync(guild=guild_obj)
-                log.info(
-                    f"✅ Slash commands synchronisées sur guild {GUILD_ID}")
-            else:
-                await self.tree.sync()  # Global (peut mettre jusqu’à ~1h la 1re fois)
-                log.info("✅ Slash commands synchronisées (global)")
+            await self.load_extension(ext)
+            log.info(f"📦 Chargé : {ext}")
         except Exception:
-            log.exception("⚠️ Échec de synchronisation des slash commands")
+            log.exception(f"⚠️ Erreur chargement {ext}")
+
+    # 2) Resync forcé sur ta guilde et LOG des commandes vues par Discord
+    try:
+        if GUILD_ID:
+            guild = discord.Object(id=GUILD_ID)
+            # on nettoie puis on resynchronise
+            self.tree.clear_commands(guild=guild)
+            synced = await self.tree.sync(guild=guild)
+            log.info(
+                f"✅ Resync guild {GUILD_ID} → {len(synced)} commandes : {[c.name for c in synced]}")
+            # (optionnel) purge globale pour éviter des doublons fantômes
+            # self.tree.clear_commands() ; await self.tree.sync()
+        else:
+            synced = await self.tree.sync()
+            log.info(
+                f"🌍 Resync global → {len(synced)} commandes : {[c.name for c in synced]}")
+    except Exception:
+        log.exception("⚠️ Échec de synchronisation des slash")
 
     async def on_ready(self) -> None:
         u = self.user
